@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Throwaway secrets
+        run: |
+          cat > secrets.yaml <<YAML
+          wifi_ssid: "ci-ssid"
+          wifi_password: "ci-password"
+          api_key: "$(openssl rand -base64 32)"
+          ota_password: "ci-ota-password"
+          ap_password: "ci-ap-password"
+          YAML
+      - name: Validate config
+        run: |
+          esphome config cgdn1.yaml > /dev/null
+          esphome -s trial_mode true config cgdn1.yaml > /dev/null
+      - uses: actions/cache@v4
+        with:
+          path: ~/.esphome
+          key: esphome-${{ hashFiles('requirements.txt') }}
+      - name: Compile
+        run: esphome compile cgdn1.yaml
+      - name: Host tests (component logic, partition table, image format)
+        run: pytest -rs
