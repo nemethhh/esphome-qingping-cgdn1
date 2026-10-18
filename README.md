@@ -24,9 +24,8 @@ Installed over the air from the stock firmware, without opening the case. See
 
 ```
 cgdn1.yaml               device configuration
-cgdn1-partitions.csv     stock partition table (must not change)
 components/              external components
-  cgdn1_boot             power latch, power-off, trial mode, optional flash log
+  cgdn1_boot             power latch, stock partition table, power-off, trial mode, flash log
   cgdn1_display          OLED driver (two panel variants) + stock page renderer
   cgdn1_touch            ATtiny814 touch slider + gesture decoder
   cgdn1_tcomp            stock T/RH self-heating compensation
@@ -35,7 +34,7 @@ components/              external components
 tools/cgdn1_ota_push.py  push an image to the stock firmware over local MQTT
 tools/gen_stock_icons.py regenerate stock_icons.h from a stock firmware image
 tests/                   host tests (g++ for the C++ logic, image/partition checks)
-docs/                    install guide, hardware map, devices.esphome.io draft
+docs/                    install guide, hardware map
 ```
 
 ## Development

@@ -14,7 +14,7 @@ from cgdn1_ota_push import check_esp_image
 
 ROOT = Path(__file__).resolve().parent.parent
 ESPHOME_DIR = ROOT
-CSV = ESPHOME_DIR / "cgdn1-partitions.csv"
+CSV = ESPHOME_DIR / "components" / "cgdn1_boot" / "cgdn1-partitions.csv"
 IMAGE = ESPHOME_DIR / ".esphome" / "build" / "cgdn1" / "build" / "firmware.ota.bin"
 SLOT_SIZE = 0x1E0000
 

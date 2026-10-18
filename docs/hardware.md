@@ -13,7 +13,7 @@ Function addresses (`FUN_400xxxxx`) in the YAML and component comments refer to 
 - The ESP32's UART is only reachable inside the case, and the screen is glued in, so opening it
   risks damaging the screen. In practice the way in is the stock OTA (see [install.md](install.md)).
 
-### Partition table (stock, kept as is: `cgdn1-partitions.csv`)
+### Partition table (stock, kept as is: `components/cgdn1_boot/cgdn1-partitions.csv`)
 
 | Name        | Type | Subtype  | Offset   | Size     | Notes                                   |
 |-------------|------|----------|----------|----------|-----------------------------------------|

@@ -17,7 +17,7 @@ esphome:
 esp32:
   board: esp32dev
   flash_size: 4MB
-  partitions: cgdn1-partitions.csv
+  # Partition table: the stock one, supplied by cgdn1_boot (do not set `partitions:`).
   framework:
     type: esp-idf
     # IDF default is ERROR: raise to INFO so the wifi/phy driver lines reach the log
