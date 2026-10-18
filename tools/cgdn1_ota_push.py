@@ -3,7 +3,8 @@
 The stock firmware (4.8.x) accepts a type "23" message on its MQTT "down" topic: it downloads the URL
 itself, writes it to the inactive OTA slot, checks only a 4-byte CRC-32 trailer, switches the boot slot
 and reboots. There is NO signature check and NO rollback: an image that doesn't boot can only be
-recovered over UART (the case has no UART pads broken out). See docs/install.md before using this.
+recovered over UART, which is only reachable inside the case (the screen is glued in). See
+docs/install.md before using this.
 
 Usage:
   cgdn1_ota_push.py FIRMWARE --broker HOST --mac MAC [options]

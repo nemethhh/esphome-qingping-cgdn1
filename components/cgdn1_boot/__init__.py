@@ -20,8 +20,8 @@ CONFIG_SCHEMA = cv.Schema(
         # OTA while this is on: it overwrites that other slot.
         cv.Optional(CONF_TRIAL_MODE, default=False): cv.boolean,
         # Persist the ESPHome log (IDF driver logs included) to the top 64 KB of
-        # the `test` partition (0x3e3000-0x3f2fff), for devices with no UART and
-        # no network. Reading it back needs a flash-read tool on the device side.
+        # the `test` partition (0x3e3000-0x3f2fff), for when neither UART nor
+        # network is available. Reading it back needs a flash-read tool on the device side.
         # Opt-in. Refuses to touch the region unless it is blank or our own log.
         cv.Optional(CONF_FLASH_LOG, default=False): cv.All(
             cv.boolean, cv.requires_component("logger")

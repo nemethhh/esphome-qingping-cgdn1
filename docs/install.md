@@ -1,7 +1,7 @@
 # Installing ESPHome on a CGDN1
 
-The CGDN1 has no UART pads and the case can't be opened without damaging the glued screen, so
-the install goes through the **stock firmware's own OTA**: over a local MQTT connection you tell
+The CGDN1's UART is only reachable inside the case, and opening the case risks damaging the
+glued-in screen, so the install goes through the **stock firmware's own OTA**: over a local MQTT connection you tell
 the stock firmware to download an image from your PC. It writes the image to its inactive OTA
 slot, checks only a CRC-32 trailer and reboots into it. No signature check, no rollback.
 

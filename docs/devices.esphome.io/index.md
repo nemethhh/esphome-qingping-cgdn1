@@ -21,7 +21,7 @@ and runs without the Qingping/Xiaomi cloud.
 
 ## Installation
 
-The case has no UART pads and the screen is glued in. ESPHome is installed through the stock
+The UART is only reachable inside the case, behind a glued-in screen. ESPHome is installed through the stock
 firmware's own OTA over a local MQTT connection, with a reversible trial mode first. Follow the
 [install guide](https://github.com/nemethhh/esphome-qingping-cgdn1/blob/main/docs/install.md).
 The stock partition table must be kept (`cgdn1-partitions.csv`).

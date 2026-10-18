@@ -25,7 +25,7 @@
 #endif
 
 // SAFETY CRITICAL: GPIO23 is the board power-hold latch. If it is not driven
-// HIGH early the device powers itself off, and there is no UART to recover.
+// HIGH early the device powers itself off, and recovering needs the UART inside the case.
 // Nothing in this file may drive GPIO23 low, with exactly ONE deliberate
 // exception: the back-button long-press power-off (power_off_long_press() /
 // power_loop_()). It is armed only after GPIO36 has read released for 200 ms

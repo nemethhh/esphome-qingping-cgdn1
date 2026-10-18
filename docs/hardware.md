@@ -10,8 +10,8 @@ Function addresses (`FUN_400xxxxx`) in the YAML and component comments refer to 
 - No secure boot, no flash encryption, no image signature check.
 - The factory-MAC eFuse fails its CRC on this product line; stock (a patched IDF fork) ignores
   it. ESPHome needs `ignore_efuse_mac_crc: true` or WiFi runs with an all-zero MAC.
-- No UART pads are broken out and the screen is glued to the case: in practice the only way in
-  is the stock OTA (see [install.md](install.md)).
+- The ESP32's UART is only reachable inside the case, and the screen is glued in, so opening it
+  risks damaging the screen. In practice the way in is the stock OTA (see [install.md](install.md)).
 
 ### Partition table (stock, kept as is: `cgdn1-partitions.csv`)
 

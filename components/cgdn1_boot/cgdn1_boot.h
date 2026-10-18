@@ -18,8 +18,8 @@ namespace cgdn1_boot {
 // its global constructor that holds the power latch) from being dropped from
 // the static archive. Optionally (trial_mode: true) marks the other OTA slot as
 // the next boot, every boot, and (flash_log: true) persists the ESPHome log, IDF
-// driver logs included, to the top 64 KB of the `test` partition for a device
-// without UART or network.
+// driver logs included, to the top 64 KB of the `test` partition for when neither
+// UART nor network is available.
 // Also owns the one deliberate power-off path (back-button long press).
 class Cgdn1Boot : public Component {
  public:
