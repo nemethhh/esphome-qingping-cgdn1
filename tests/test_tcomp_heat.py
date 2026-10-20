@@ -71,7 +71,7 @@ int main() {
       bs_init = false; for (auto &i : ein) { i = tcomp::Inputs(); i.t_raw = 29.1f; i.rh_raw = 33.0f; i.usb = true; } printf("ok\n"); }
     else if (cmd == "eset") {  // eset idx name value
       int i; std::string k; in >> i >> k; float v = rd(in); tcomp::Inputs &x = ein[i];
-      if (k == "t") x.t_raw = v; else if (k == "bright") x.bright_target = (int) v; else if (k == "level") x.level = v;
+      if (k == "t") x.t_raw = v; else if (k == "rh") x.rh_raw = v; else if (k == "bright") x.bright_target = (int) v; else if (k == "level") x.level = v;
       else if (k == "ble") x.ble = v != 0; else if (k == "measured") x.measured = v != 0; else if (k == "a6") x.heat.a6 = v;
       else if (k == "a1") x.heat.a1 = v; else if (k == "abt") x.heat.a_bt = v; else if (k == "btcomp") x.heat.bt_comp = v != 0;
       else if (k == "tau1") x.heat.tau_d1 = v; else if (k == "tau2") x.heat.tau_d2 = v; else if (k == "taubt") x.heat.tau_bt = v;
@@ -338,10 +338,46 @@ def etick(drv, i, n, hs=1):
 def test_stock_path_identical(drv):
     drv("ereset")
     eset(drv, 0, bright=100)
-    got = etick(drv, 0, 3 * 3600)["t"]
-    ref = drv("bare 10800")[0]
-    assert got == pytest.approx(ref, abs=1e-6)
-    assert got == pytest.approx(22.12, abs=0.01)
+    r = etick(drv, 0, 3 * 3600)
+    ref = drv("bare 10800")
+    assert r["t"] == pytest.approx(ref[0], abs=1e-6)
+    assert r["rh"] == pytest.approx(ref[1], abs=1e-6)  # stock RH transfer untouched
+    assert r["th"] == pytest.approx(ref[2], abs=1e-6)
+    assert r["t"] == pytest.approx(22.12, abs=0.01)
+
+
+def rh_air(rh_raw, t_raw, t_air):
+    """Vapour pressure conserved: RH_raw * e_s(T_raw) / e_s(T_air), Magnus over water (Sensirion)."""
+    es = lambda t: math.exp(17.62 * t / (243.12 + t))  # noqa: E731
+    return min(rh_raw * es(t_raw) / es(t_air), 99.9)
+
+
+@pytest.mark.parametrize("rh_raw", (20.0, 33.0, 54.9, 55.1, 70.0))
+def test_measured_rh_conserves_vapour_pressure(drv, rh_raw):
+    drv("ereset")
+    eset(drv, 0, bright=100, measured=1, rh=rh_raw)
+    r = etick(drv, 0, 3 * 3600)
+    # USB + charge done: the humidity transfer uses the full model T, charging term included
+    assert r["th"] == pytest.approx(r["t"], abs=1e-4)
+    assert r["rh"] == pytest.approx(rh_air(rh_raw, 29.1, r["t"]), abs=0.01)
+
+
+def test_measured_rh_no_055_step(drv):
+    out = {}
+    for rh_raw in (54.99, 55.01):
+        drv("ereset")
+        eset(drv, 0, bright=100, measured=1, rh=rh_raw)
+        out[rh_raw] = etick(drv, 0, 3 * 3600)["rh"]
+    assert out[55.01] / out[54.99] == pytest.approx(55.01 / 54.99, abs=1e-4)
+
+
+def test_measured_rh_below_stock(drv):
+    """Stock's lambda' = 220.12 reads ~4-6 %RH above the conserved vapour pressure."""
+    drv("ereset")
+    eset(drv, 0, bright=100, measured=1)
+    r = etick(drv, 0, 3 * 3600)
+    stock = 33.0 * math.exp((29.1 - r["th"]) * 4283.78 / (r["th"] + 220.12) / (29.1 + 220.12))
+    assert r["rh"] < stock - 4.0
 
 
 def test_measured_replaces_bright(drv):

@@ -160,13 +160,18 @@ struct Calib {
 struct Out {
   float t;    // compensated temperature, degC (after clamps and calibration)
   float rh;   // compensated humidity, %RH
-  float t_h;  // temperature used for the humidity transfer (no charging term, no slew limit)
+  float t_h;  // temperature used for the humidity transfer (no slew limit; Stock: no charging term)
 };
+
+// Magnus over water, Sensirion's constants (-45..60 C): e_s(T) ~ exp(B*T / (L + T)).
+static constexpr double MAGNUS_B = 17.62;
+static constexpr double MAGNUS_L = 243.12;  // degC
 
 // ---- one 1-second step ------------------------------------------------------------------
 // t_raw / rh_raw: SHT4x degC / %RH. cstate: 0 battery, 1 charging, 2 USB + charge done.
 // bright_target: 100 while the display is on, else 0. batt_pct: 0..100.
-// heat_c: measured display + Bluetooth heat [degC] (heat.h). NaN -> stock bright() term.
+// heat_c: measured display + Bluetooth heat [degC] (heat.h). NaN -> Stock: bright() term and the
+// stock humidity transfer; otherwise Measured: heat_c and the vapour-pressure humidity transfer.
 inline Out step(State &s, float t_raw, float rh_raw, int cstate, int bright_target, int batt_pct,
                 const Calib &cal = Calib(), float heat_c = NAN) {
   // FUN_40225f40(S, 1)
@@ -206,9 +211,12 @@ inline Out step(State &s, float t_raw, float rh_raw, int cstate, int bright_targ
   float t = (float) ((double) tr + preheating(s.on));
   t = (float) ((double) t + discharging(s.dis));
   // Measured mode: heat_c (heat.h) replaces the stock bright() ramp; bacc still advances above.
-  t = (float) ((double) t + (std::isnan(heat_c) ? bright(s.bacc / 20) : -(double) heat_c));
-  const float t_h = t;
+  const bool measured = !std::isnan(heat_c);
+  t = (float) ((double) t + (measured ? -(double) heat_c : bright(s.bacc / 20)));
+  const float t_stock_h = t;
   t = (float) ((double) (300 - bs) * cc / 300.0 + (double) t);
+  // Measured: the charging heat warms the sensor too, so the humidity transfer takes the full model T.
+  const float t_h = measured ? t : t_stock_h;
   if (s.last > -100.0f) {  // slew limiter: a jump of more than 3 C moves only 0.3 C per second
     if (s.last > t && s.last - t > 3.0f)
       t = (float) ((double) s.last - 0.3);
@@ -216,16 +224,25 @@ inline Out step(State &s, float t_raw, float rh_raw, int cstate, int bright_targ
       t = (float) ((double) s.last + 0.3);
   }
   s.last = t;
-  // FUN_400e8d9c: move RH to the compensated temperature (Magnus-type saturation-pressure
-  // ratio; b*c = 4283.78 = 17.62*243.12 but c' = 220.12 as compiled), then a hard x0.9
-  // whenever RAW RH > 55.00 %, clamp 99.9.
   const double trd = tr, thd = t_h;
-  const double ex = std::exp((trd - thd) * 4283.78 / (thd + 220.12) / (trd + 220.12));
-  // Stock holds RH*100 as u16; a (physically impossible) negative SHT4x RH would wrap there.
-  // We clamp it to 0 instead.
-  const int rh100 = rh_raw > 0.0f ? (int) (rh_raw * 100.0f) : 0;
-  float rh = (float) ((double) rh100 / 100.0 * ex);
-  if (rh100 > 5500) rh = (float) ((double) rh * 0.9);
+  float rh;
+  if (measured) {
+    // Ours: heating the air at the sensor leaves its water vapour pressure unchanged, so
+    // RH_air = RH_raw * e_s(T_raw) / e_s(T_air). Stock below reads ~4-6 %RH above this at the
+    // usual self-heat (the raw SHT4x and the SCD40 agree on the vapour pressure; stock does not).
+    rh = (float) ((double) std::fmax(rh_raw, 0.0f) *
+                  std::exp(MAGNUS_B * MAGNUS_L * (trd - thd) / ((MAGNUS_L + trd) * (MAGNUS_L + thd))));
+  } else {
+    // FUN_400e8d9c: move RH to the compensated temperature (Magnus-type saturation-pressure
+    // ratio; b*c = 4283.78 = 17.62*243.12 but c' = 220.12 as compiled), then a hard x0.9
+    // whenever RAW RH > 55.00 %.
+    const double ex = std::exp((trd - thd) * 4283.78 / (thd + 220.12) / (trd + 220.12));
+    // Stock holds RH*100 as u16; a (physically impossible) negative SHT4x RH would wrap there.
+    // We clamp it to 0 instead.
+    const int rh100 = rh_raw > 0.0f ? (int) (rh_raw * 100.0f) : 0;
+    rh = (float) ((double) rh100 / 100.0 * ex);
+    if (rh100 > 5500) rh = (float) ((double) rh * 0.9);
+  }
   if (rh > 99.9f) rh = 99.9f;
   if (t < 0.0f)
     t = 0.0f;
@@ -291,7 +308,7 @@ struct Inputs {
   Calib cal;
   float level = 6;         // "Display brightness" 1..6 (heat model drive)
   bool ble = false;        // Bluetooth proxy active
-  bool measured = false;   // true: Measured heat model replaces stock bright(); false: Stock
+  bool measured = false;   // true: Measured heat model replaces stock bright() + physical RH transfer; false: Stock
   heat::Params heat;       // heat model parameters (NaN fields -> defaults)
 };
 

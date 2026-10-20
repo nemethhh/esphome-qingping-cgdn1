@@ -956,7 +956,9 @@ output:
 select:
   # Temperature model (ours, not stock): "Stock" = the original 4.8.5 brightness/charge terms
   # only, "Measured" = adds the display (brightness-dependent) and Bluetooth heat measured on
-  # the device ("Display heat" / "Bluetooth heat" numbers). Restored; Measured first boot.
+  # the device ("Display heat" / "Bluetooth heat" numbers) and moves RH to the compensated T at
+  # constant vapour pressure (stock's transfer reads ~4-6 %RH high, see tcomp.h).
+  # Restored; Measured first boot.
   - platform: template
     id: hc_model
     name: "Heat model"
