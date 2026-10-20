@@ -97,7 +97,9 @@ struct Bouncer {
 /// vTaskDelayUntil(2) @ 10 ms, no easing) and snaps when <= STEP_PX remain, so one page takes 15
 /// frames = 300 ms (the 15th push lands within 10 px and snaps, a 20 px last step). A touch while
 /// sliding chains: the target moves one more page the same way. Pages change on a touch only (a
-/// deliberate choice): no auto-advance like the stock carousel screensaver (FUN_400e4038).
+/// deliberate choice): no auto-advance like the stock carousel screensaver (FUN_400e4038),
+/// except one optional dwell page (the info page) that slides on by itself DWELL ms after it
+/// settled there (no indicator; a stall, i.e. display off, restarts the count).
 /// The page indicator (FUN_400e4d48) is shown for INDICATOR_MS after a touch only.
 /// The offset is kept unwrapped and the target as an integer page count, so a chain never
 /// reverses; both are normalised (mod count) only once settled.
@@ -107,12 +109,21 @@ struct PageSlider {
   static constexpr uint32_t INDICATOR_MS = 3000;
   static constexpr uint32_t MAX_FRAMES = 64;  // per update(): a stall finishes the slide instantly
 
-  void begin(int count, uint32_t now) {
+  void begin(int count, uint32_t now, int first = 0) {
     this->count_ = std::max(1, count);
-    this->off_ = 0;
-    this->target_ = 0;
+    this->target_ = mod_(first, this->count_);
+    this->off_ = this->target_ * PAGE_PX;
     this->t_frame_ = now;
+    this->t_settled_ = now;
     this->touched_ = false;
+    this->begun_ = true;
+  }
+  /// begin() has run: the pages are on screen (past the boot screen).
+  bool begun() const { return this->begun_; }
+  /// Page `page` slides on to the next one by itself once settled there for `ms` (0 = never).
+  void set_dwell(int page, uint32_t ms) {
+    this->dwell_page_ = page;
+    this->dwell_ms_ = ms;
   }
   /// Touch: chain one page forward / back, show the indicator. Ignored
   /// before begin() (a touch on the boot screen or a test pattern: no slide, no 50 Hz redraws).
@@ -121,11 +132,13 @@ struct PageSlider {
   /// Whole frames since the last call (a slide only); normalised once settled.
   void update(uint32_t now) {
     uint32_t n = (now - this->t_frame_) / FRAME_MS;
+    bool settle = this->animating();
     if (n > MAX_FRAMES) {
       // Stall (display off: the lambda is not run): finish any slide now, so the panel wakes
       // to a settled page like stock.
       n = MAX_FRAMES;
       this->t_frame_ = now;
+      settle = true;
     } else {
       this->t_frame_ += n * FRAME_MS;
     }
@@ -138,6 +151,12 @@ struct PageSlider {
     if (!this->animating()) {
       this->target_ = mod_(this->target_, this->count_);
       this->off_ = this->target_ * PAGE_PX;
+      if (settle)
+        this->t_settled_ = now;  // arrived (or woke up) here: the dwell counts from now
+      if (this->dwell_ms_ != 0 && this->target_ == this->dwell_page_ && now - this->t_settled_ >= this->dwell_ms_) {
+        this->t_frame_ = now;  // slide on like next(), without the indicator
+        this->target_++;
+      }
     }
   }
   bool animating() const { return this->off_ != this->target_ * PAGE_PX; }
@@ -170,9 +189,9 @@ struct PageSlider {
   }
   static int mod_(int v, int m) { return ((v % m) + m) % m; }
   static int floor_div_(int v, int d) { return (v - mod_(v, d)) / d; }
-  int count_{1}, off_{0}, target_{0};
-  uint32_t t_frame_{0}, t_touch_{0};
-  bool touched_{false};
+  int count_{1}, off_{0}, target_{0}, dwell_page_{-1};
+  uint32_t t_frame_{0}, t_touch_{0}, t_settled_{0}, dwell_ms_{0};
+  bool touched_{false}, begun_{false};
 };
 
 /// Brightness steps: 0.75 photographic stop (x 2^-0.75 = x 0.59 segment current) per 20 %, i.e.

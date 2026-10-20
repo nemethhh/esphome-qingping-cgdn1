@@ -53,7 +53,7 @@ int main() {
 }
 """
 
-NONE, PM25, PM10, CO2, TEMP, HUMI = range(6)
+NONE, PM25, PM10, CO2, TEMP, HUMI, PM1 = range(7)
 CHINA, US, EU = range(3)
 COLOURS = ["off", "white", "orange_blink", "blue", "green", "yellow", "orange", "red", "deep_red", "purple"]
 C = {name: i for i, name in enumerate(COLOURS)}
@@ -143,6 +143,13 @@ def test_pm25_eu(drv):
 
 def test_pm25_rounds_like_display(drv):
     check(drv, PM25, CHINA, [(35.4, "green"), (35.5, "yellow")])
+
+
+def test_pm1_uses_pm25_thresholds(drv):
+    # PM1.0 is ours (stock shows no PM1.0): no standard of its own, so the PM2.5 table ('<=').
+    check(drv, PM1, CHINA, [(35, "green"), (36, "yellow"), (250, "deep_red"), (251, "purple")])
+    check(drv, PM1, US, [(12, "green"), (13, "yellow"), (55, "orange"), (56, "red")])
+    check(drv, PM1, EU, [(14, "green"), (15, "yellow"), (109, "red"), (999, "deep_red")])
 
 
 def test_pm10_china_strict(drv):

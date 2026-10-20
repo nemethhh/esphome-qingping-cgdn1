@@ -1,6 +1,6 @@
 #pragma once
 // Layout and drawing of one stock-firmware sensor page (HUGE outline digits, label icon, "%", ".",
-// "E2", loader) and the 5-dot page indicator. Pure: no ESPHome includes, drawing goes through a
+// "E2", loader), the PM1.0 page and the page indicator. Pure: no ESPHome includes, drawing goes through a
 // plot(x, y) callback, so the host tests (tests/test_stock_page.py) compile it with plain g++.
 // All coordinates are upright logical canvas coordinates (160 x 128), relative to the page origin
 // (the stock origin (Y0, X0)); the stock +2 px panel shift is ignored here.
@@ -12,8 +12,8 @@
 
 namespace esphome::cgdn1_display {
 
-/// Stock sensor type ids 1..5 (sensor page order).
-enum class PageKind : uint8_t { PM25, PM10, CO2, TEMP, HUMI };
+/// Stock sensor type ids 1..5 (sensor page order), then our PM1.0 (stock shows none).
+enum class PageKind : uint8_t { PM25, PM10, CO2, TEMP, HUMI, PM1 };
 enum class PageState : uint8_t { VALUE, LOADING, ERROR };
 
 /// What one page shows: `value` is the stock-clamped integer (TEMP: tenths of a degree).
@@ -44,6 +44,31 @@ static constexpr int LABEL_Y = 110;    // FUN_400e4a74
 static constexpr int E2_X = 44, E2_Y = 40;       // FUN_400e4b94(fb, 1, ...), 0x3f404dbb
 static constexpr int LOADER_X = 60, LOADER_Y = 57;  // FUN_400e4bd0
 static constexpr int DOTS_X = 64, DOTS_Y = 12;   // page indicator
+
+// label "pm1.0", 49x15 (not in stock): "pm" and "." of pm2.5, "1" and "0" of pm10, spaced like pm2.5.
+//   ##########....#############....###.....##########
+//   #........#....#.....#.....#......#.....#........#
+//   #........#....#.....#.....#......#.....#........#
+//   #........#....#.....#.....#......#.....#........#
+//   #........#....#.....#.....#......#.....#........#
+//   #........#....#.....#.....#......#.....#........#
+//   #........#....#.....#.....#......#.....#........#
+//   #........#....#.....#.....#......#.....#........#
+//   ##########....#.....#.....#......#.....#........#
+//   #.............#.....#.....#......#.....#........#
+//   #.............#.....#.....#......#.....#........#
+//   #.............#.....#.....#......#.....#........#
+//   #.............#.....#.....#......#.....#........#
+//   #.............#.....#.....#......#.....#........#
+//   #.............#.....#.....#......#..#..##########
+inline constexpr uint8_t ICON_PM1_DATA[] = {
+    0xFF, 0xC3, 0xFF, 0xE1, 0xC1, 0xFF, 0x80, 0x80, 0x42, 0x08, 0x20, 0x41, 0x00, 0x80, 0x80, 0x42, 0x08, 0x20,
+    0x41, 0x00, 0x80, 0x80, 0x42, 0x08, 0x20, 0x41, 0x00, 0x80, 0x80, 0x42, 0x08, 0x20, 0x41, 0x00, 0x80, 0x80,
+    0x42, 0x08, 0x20, 0x41, 0x00, 0x80, 0x80, 0x42, 0x08, 0x20, 0x41, 0x00, 0x80, 0x80, 0x42, 0x08, 0x20, 0x41,
+    0x00, 0x80, 0xFF, 0xC2, 0x08, 0x20, 0x41, 0x00, 0x80, 0x80, 0x02, 0x08, 0x20, 0x41, 0x00, 0x80, 0x80, 0x02,
+    0x08, 0x20, 0x41, 0x00, 0x80, 0x80, 0x02, 0x08, 0x20, 0x41, 0x00, 0x80, 0x80, 0x02, 0x08, 0x20, 0x41, 0x00,
+    0x80, 0x80, 0x02, 0x08, 0x20, 0x41, 0x00, 0x80, 0x80, 0x02, 0x08, 0x20, 0x49, 0xFF, 0x80};
+inline constexpr StockIcon ICON_PM1 = {49, 15, ICON_PM1_DATA};
 
 /// Stock gives up on a missing first reading after this long and shows "E2".
 static constexpr uint32_t LOADING_MAX_MS = 300000;
@@ -111,6 +136,7 @@ inline int stock_value(PageKind kind, float v) {
   switch (kind) {
     case PageKind::PM25:
     case PageKind::PM10:
+    case PageKind::PM1:
       max = 999;
       break;
     case PageKind::CO2:
@@ -151,7 +177,8 @@ template<typename Plot> void draw_stock_icon(const StockIcon &icon, int x, int y
 }
 
 /// Label icon and its x offset from 80 (FUN_400e4a74): thermometer -5, droplet -9, CO2 -21,
-/// pm2.5 / pm10 -29 (the icons are 8 / 16 / 40 / 56 px wide, so they are centred on ~x 79).
+/// pm2.5 / pm10 -29 (the icons are 8 / 16 / 40 / 56 px wide, so they are centred on ~x 79); our
+/// 49 px pm1.0 -26.
 inline const StockIcon &page_label(PageKind kind, int *dx) {
   switch (kind) {
     case PageKind::PM25:
@@ -160,6 +187,9 @@ inline const StockIcon &page_label(PageKind kind, int *dx) {
     case PageKind::PM10:
       *dx = -29;
       return ICON_PM10;
+    case PageKind::PM1:
+      *dx = -26;
+      return ICON_PM1;
     case PageKind::CO2:
       *dx = -21;
       return ICON_CO2;
@@ -227,11 +257,31 @@ inline BounceRange bounce_range(const Rect &ink, int w, int h) {
           h - BOUNCE_MARGIN - ink.y1};
 }
 
-/// The 5-dot page indicator: the 32x4 glyph of the active page at (64, 12).
-template<typename Plot> void draw_page_dots(int active, Plot plot) {
-  if (active < 0 || active > 4)
+/// The page indicator for `count` pages, drawn like the stock 5-dot 32x4 glyphs at (64, 12)
+/// (which it reproduces for 5): a 2x2 dot per page on a 6 px pitch, the active one a 4x4 ring, the
+/// 6 * count + 2 px box centred on the stock 32 px one.
+template<typename Plot> void draw_page_dots(int active, int count, Plot plot) {
+  if (active < 0 || active >= count)
     return;
-  draw_stock_icon(*PAGE_DOTS[active], DOTS_X, DOTS_Y, plot);
+  const int x0 = DOTS_X + (32 - (6 * count + 2)) / 2;
+  for (int k = 0; k < count; k++) {
+    const int x = x0 + 6 * k;
+    if (k == active) {
+      for (int i = 0; i < 4; i++) {
+        plot(x + 1 + i, DOTS_Y);
+        plot(x + 1 + i, DOTS_Y + 3);
+      }
+      for (int j = 1; j < 3; j++) {
+        plot(x + 1, DOTS_Y + j);
+        plot(x + 4, DOTS_Y + j);
+      }
+    } else {
+      for (int j = 1; j < 3; j++) {
+        plot(x + 2, DOTS_Y + j);
+        plot(x + 3, DOTS_Y + j);
+      }
+    }
+  }
 }
 
 }  // namespace esphome::cgdn1_display

@@ -51,9 +51,15 @@ int main() {
       unsigned long now; in >> now;
       printf("%d %d %d %d %d\n", sl.offset(), sl.page(), (int) sl.animating(),
              (int) sl.indicator_visible((uint32_t) now), sl.target_page());
-    } else if (cmd == "sbegin") {  // sbegin count now
-      int c; unsigned long now; in >> c >> now;
-      sl.begin(c, (uint32_t) now);
+    } else if (cmd == "sbegin") {  // sbegin count now [first]
+      int c, first = 0; unsigned long now; in >> c >> now >> first;
+      sl.begin(c, (uint32_t) now, first);
+      printf("ok\n");
+    } else if (cmd == "sbegun") {
+      printf("%d\n", (int) sl.begun());
+    } else if (cmd == "sdwell") {  // sdwell page ms: that page slides on by itself after ms
+      int pg; unsigned long ms; in >> pg >> ms;
+      sl.set_dwell(pg, (uint32_t) ms);
       printf("ok\n");
     } else if (cmd == "snext" || cmd == "sprev") {  // snext now
       unsigned long now; in >> now;
@@ -315,6 +321,51 @@ def test_slider_no_auto_advance(drv):
     assert all(v[1] == 1 and not v[2] for v in out[3:])  # settled on page 1 by 300 ms, stays
 
 
+def test_slider_begin_on_first_page(drv):
+    v = ints(run(drv, ["sbegin 7 0 1", "supdate 0"])[1])
+    assert v[:3] == [160, 1, 0]
+    assert v[4:6] == [-160, 0]  # page 1 on screen, page 0 one screen to the left
+
+
+def frames(drv, cmds):
+    return [ints(o) for o in run(drv, cmds) if o.count(" ") > 2]
+
+
+def test_slider_dwell_page_slides_on(drv):
+    # The info page (last of 7) moves on to page 0 by itself once settled there for 10 s, without
+    # the page indicator; every other page stays put.
+    out = frames(drv, ["sbegin 7 0 6", "sdwell 6 10000"] + tick(0, 10000) + ["supdate 10000", "supdate 10300"]
+                 + tick(10425, 70000))
+    assert all(v[1] == 6 and not v[2] for v in out[:-2 - len(tick(10425, 70000))])
+    at, done = out[len(tick(0, 10000))], out[len(tick(0, 10000)) + 1]
+    assert at[2] and not at[3]
+    assert done[:4] == [0, 0, 0, 0]
+    assert all(v[1] == 0 and not v[2] for v in out[-len(tick(10425, 70000)):])
+
+
+def test_slider_dwell_counts_from_arrival(drv):
+    # Reached by a swipe back from page 0 (settled at 300 ms, seen settled by the 375 ms redraw):
+    # the 10 s count from there, not from begin().
+    out = frames(drv, ["sbegin 7 0", "sdwell 6 10000", "sprev 0"] + tick(0, 12000))
+    first_auto = next(i for i, v in enumerate(out) if i > 3 and v[2])
+    assert tick(0, 12000)[first_auto] == "supdate 10375"
+
+
+def test_slider_dwell_touch_still_works(drv):
+    # A touch on the info page slides on at once (stock timing), with the indicator.
+    out = frames(drv, ["sbegin 7 0 6", "sdwell 6 10000"] + tick(0, 5000) + ["snext 5000", "supdate 5000",
+                                                                            "supdate 5300"])
+    assert out[-1][:4] == [0, 0, 0, 1]
+
+
+def test_slider_dwell_restarts_after_stall(drv):
+    # Display off for an hour on the info page: it wakes on the info page and gets its full 10 s.
+    out = frames(drv, ["sbegin 7 0 6", "sdwell 6 10000", "supdate 0", "supdate 3600000"]
+                 + tick(3600125, 3610000) + ["supdate 3610000"])
+    assert all(v[1] == 6 and not v[2] for v in out[:-1])
+    assert out[-1][2]
+
+
 def test_slider_indicator(drv):
     # Off after begin(), 3 s after a touch only.
     out = [ints(o) for o in run(drv, ["sbegin 5 0", "supdate 0"] + tick(125, 10000)
@@ -334,6 +385,11 @@ def test_slider_target_page(drv):
     assert tgt(["sprev 0", "sstate 0"])[0][3] == 4  # wraps
     assert tgt(["snext 0", "snext 0", "supdate 140", "sstate 140"])[0][3] == 2  # chain
     assert tgt(["snext 0", "supdate 100", "sprev 100", "sstate 100"])[0][3] == 0  # reversed
+
+
+def test_slider_begun(drv):
+    # Past the boot screen (night mode's "pages shown"): only once begin() ran.
+    assert run(drv, ["sreset", "sbegun", "sbegin 7 0 1", "sbegun"]) == ["ok", "0", "ok", "1"]
 
 
 def test_slider_touch_before_begin_ignored(drv):

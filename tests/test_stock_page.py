@@ -14,7 +14,8 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 DISPLAY_DIR = ROOT / "components" / "cgdn1_display"
-KINDS = ["PM25", "PM10", "CO2", "TEMP", "HUMI"]
+KINDS = ["PM25", "PM10", "CO2", "TEMP", "HUMI", "PM1"]
+ICONS_H = DISPLAY_DIR / "stock_icons.h"
 
 DRIVER = r"""
 #include "stock_page.h"
@@ -62,10 +63,10 @@ int main() {
         for (auto &q : px) printf(" %d,%d", q.first, q.second);
         printf("\n");
       }
-    } else if (cmd == "dots") {
-      int a; in >> a;
+    } else if (cmd == "dots") {  // dots active [count]
+      int a, c = 5; in >> a >> c;
       std::set<std::pair<int, int>> px;
-      draw_page_dots(a, [&](int x, int y) { px.insert({x, y}); });
+      draw_page_dots(a, c, [&](int x, int y) { px.insert({x, y}); });
       printf("%zu", px.size());
       for (auto &q : px) printf(" %d,%d", q.first, q.second);
       printf("\n");
@@ -156,7 +157,8 @@ def test_huge_number_0_5(drv):
 
 
 def test_stock_value(drv):
-    cases = [("PM25", 1234, 999), ("PM25", -3, 0), ("PM25", 12.7, 12), ("CO2", 12000, 9999),
+    cases = [("PM25", 1234, 999), ("PM25", -3, 0), ("PM25", 12.7, 12), ("PM1", 1234, 999), ("PM1", 8.9, 8),
+             ("CO2", 12000, 9999),
              ("TEMP", 23.47, 234), ("TEMP", -1.2, 0), ("TEMP", 55, 500),
              ("HUMI", 45.9, 45), ("HUMI", 100, 99), ("HUMI", -1, 0)]
     out = run(drv, [f"value {KINDS.index(k)} {v}" for k, v, _ in cases])
@@ -211,3 +213,57 @@ def test_previews(drv):
     for kind, value in [("CO2", 812), ("TEMP", 234), ("HUMI", 45)]:
         rows = render(drv, kind, 0, value)
         assert len(rows) == 128 and all(len(r) == 160 for r in rows)
+
+
+def stock_art(title):
+    """Lit pixels of a stock icon from its ASCII art in stock_icons.h (`// label "pm10", 56x15`)."""
+    lines = ICONS_H.read_text().splitlines()
+    i = next(n for n, l in enumerate(lines) if l.startswith(f'// {title}, '))
+    rows = []
+    for l in lines[i + 1:]:
+        if not l.startswith("//   "):
+            break
+        rows.append(l[5:])
+    return {(x, y) for y, r in enumerate(rows) for x, c in enumerate(r) if c == "#"}
+
+
+def cols(px, x0, x1, to):
+    """Pixels of px in columns [x0, x1], moved so column x0 lands on `to`."""
+    return {(x - x0 + to, y) for x, y in px if x0 <= x <= x1}
+
+
+def test_pm1_label_built_from_stock_glyphs(drv):
+    # "pm1.0" in the stock outline style: "pm" of pm2.5, "1" and "0" of pm10, the "." of pm2.5,
+    # spaced like pm2.5 (4 px after "m", 2 px either side of the "."): 49 px wide, centred on x ~78
+    # like the stock labels (pm2.5 ink 51..106).
+    pm25, pm10 = stock_art('label "pm2.5"'), stock_art('label "pm10"')
+    want = cols(pm25, 0, 26, 0) | cols(pm10, 35, 37, 31) | cols(pm25, 43, 43, 36) | cols(pm10, 42, 51, 39)
+    want = {(x + 54, y + 110) for x, y in want}
+    label = {(x, y) for x, y in pixels(drv, "PM1", 0, 12) if y >= 110}
+    assert label == want
+
+
+def test_pm1_page_digits_like_pm25(drv):
+    a = {p for p in pixels(drv, "PM1", 0, 812) if p[1] < 110}
+    b = {p for p in pixels(drv, "PM25", 0, 812) if p[1] < 110}
+    assert a == b and a
+
+
+def dots(drv, active, count):
+    f = run(drv, [f"dots {active} {count}"])[0].split()[1:]
+    return {tuple(int(v) for v in p.split(",")) for p in f}
+
+
+@pytest.mark.parametrize("active", range(5))
+def test_page_dots_5_are_the_stock_glyphs(drv, active):
+    want = {(x + 64, y + 12) for x, y in stock_art(f"page indicator, {'1st 2nd 3rd 4th 5th'.split()[active]} dot active")}
+    assert dots(drv, active, 5) == want
+
+
+def test_page_dots_7(drv):
+    # Same 6 px pitch / glyphs, box 6 * 7 + 2 = 44 wide centred like the stock 32 px one (x 64 = 80 - 16).
+    for active in range(7):
+        px = dots(drv, active, 7)
+        outline = {(58 + 6 * active + x, 12 + y) for x in range(1, 5) for y in range(4) if x in (1, 4) or y in (0, 3)}
+        small = {(58 + 6 * k + 2 + x, 13 + y) for k in range(7) if k != active for x in range(2) for y in range(2)}
+        assert px == outline | small, active

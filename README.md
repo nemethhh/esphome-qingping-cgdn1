@@ -15,7 +15,7 @@ Installed over the air from the stock firmware, without opening the case. See
 | T/RH        | Stock self-heating compensation (`cgdn1_tcomp`) with a measured display + Bluetooth heat model, tunable from HA ("Heat model" Stock/Measured), plus offsets |
 | Bluetooth   | Passive Bluetooth proxy for Home Assistant (advertisements only), switchable |
 | Battery     | Voltage, stock percent table, charge current, charging state                 |
-| Display     | Stock pages and digits, push slide on touch, burn-in drift, brightness, night mode |
+| Display     | Stock pages and digits plus a PM1.0 page, push slide on touch, burn-in drift, brightness, night mode; an info page (version, MAC, WiFi/IP, fallback AP, Bluetooth, uptime) that moves on after 10 s |
 | Touch       | Taps/swipes/long touch from the ATtiny814 slider, as HA events               |
 | LED         | Stock level colours for the reading on screen (PM standard selectable)       |
 | Power       | Back button: click toggles the display, long press powers off (on battery)   |

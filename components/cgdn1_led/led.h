@@ -24,9 +24,10 @@
 
 namespace cgdn1_led {
 
-// Stock sensor type ids (FUN_400e63a4). NONE = no single reading is shown (boot screen).
+// Stock sensor type ids (FUN_400e63a4) + our PM1.0 (6, not in stock). NONE = no single reading is
+// shown (boot screen, info page).
 enum Sensor : uint8_t { SENSOR_NONE = 0, SENSOR_PM25 = 1, SENSOR_PM10 = 2, SENSOR_CO2 = 3, SENSOR_TEMP = 4,
-                        SENSOR_HUMI = 5 };
+                        SENSOR_HUMI = 5, SENSOR_PM1 = 6 };
 
 // Stock LED states (event-group bits in brackets).
 enum Colour : uint8_t {
@@ -110,6 +111,7 @@ inline Colour level(Sensor s, float v, PmStandard std = PM_CHINA) {
     return ORANGE_BLINK;
   const int si = std > PM_EU ? PM_CHINA : std;
   switch (s) {
+    case SENSOR_PM1:     // ours: no PM1.0 standard, so the PM2.5 table
     case SENSOR_PM25: {  // '<=' (FUN_400e63a4 case 1)
       const auto &t = PM25_TH[si];
       const long x = std::lround(v);

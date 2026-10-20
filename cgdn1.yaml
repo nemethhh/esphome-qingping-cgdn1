@@ -430,6 +430,7 @@ script:
           in.ota = id(led_ota);
           in.sensor = id(led_shown);
           switch (in.sensor) {
+            case SENSOR_PM1: in.value = id(pm1).state; break;
             case SENSOR_PM25: in.value = id(pm25).state; break;
             case SENSOR_PM10: in.value = id(pm10).state; break;
             case SENSOR_CO2: in.value = id(co2).state; break;
@@ -543,8 +544,9 @@ globals:
   - id: tc_display_on
     type: bool
     initial_value: "true"
-  # Stock page slider (cgdn1_display::PageSlider: slides FUN_400e3e28 / FUN_400e3c18): 5 pages,
-  # a 10 px / 20 ms push slide on a touch only (no carousel); the touch slider chains
+  # Stock page slider (cgdn1_display::PageSlider: slides FUN_400e3e28 / FUN_400e3c18): 7 pages
+  # (stock 5 + our PM1.0 and info), a 10 px / 20 ms push slide on a touch only (no carousel; the
+  # info page alone slides on after 10 s); the touch slider chains
   # next()/prev() (ignored before the first page is drawn). Stepped by update() in the lambda.
   - id: pages
     type: cgdn1_display::PageSlider
@@ -553,7 +555,8 @@ globals:
     type: bool
     initial_value: "false"
   # RGB status LED (components/cgdn1_led): the 100 ms state machine, the reading currently on
-  # screen (set by the display lambda every redraw; SENSOR_NONE = boot screen) and the OTA flag.
+  # screen (set by the display lambda every redraw; SENSOR_NONE = boot screen / info page) and the
+  # OTA flag.
   - id: led_engine
     type: cgdn1_led::Engine
   - id: led_shown
@@ -719,7 +722,7 @@ interval:
       - lambda: |-
           cgdn1_night::Inputs in;
           in.enabled = id(night_switch).state;
-          in.pages_shown = id(led_shown) != cgdn1_led::SENSOR_NONE;  // past the boot screen
+          in.pages_shown = id(pages).begun();  // past the boot screen
           const ESPTime t = id(ha_time).now();
           in.clock_valid = t.is_valid();
           in.hour = t.hour;
@@ -818,6 +821,12 @@ font:
     id: f_small
     size: 16
     glyphs: *text_glyphs
+  # Info page (ours): Bold (700) at 14 px fits 7 lines of ~25 characters; every printable ASCII
+  # character, so any network name shows as typed (other characters are skipped).
+  - file: "gfonts://Roboto Condensed@700"
+    id: f_info
+    size: 14
+    glyphs: ' !"#$%&''()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_`abcdefghijklmnopqrstuvwxyz{|}~'
 
 display:
   - platform: cgdn1_display
@@ -852,16 +861,19 @@ display:
     update_interval: 125ms
     lambda: |-
       // 160 x 128 canvas, stock sensor pages (components/cgdn1_display/stock_page.h): ONE reading
-      // at a time as outline HUGE digits + the stock label icon ("%" on RH), PM2.5 -> PM10 -> CO2
-      // -> T -> RH. PageSlider = the stock slides FUN_400e3e28 / FUN_400e3c18: pages 160 px
-      // apart, pushed 10 px per 20 ms frame (snap <= 10 px), the ring wraps RH -> PM2.5. The page
-      // changes on a touch only (tap/swipe toward the left end = next; no auto carousel); a touch
-      // during a slide chains one more page (tap/swipe only, no finger-follow drag). The 5-dot
-      // indicator shows for 3 s after a touch, never permanently. No wifi/battery overlay: fixed
-      // pixels would burn in. The whole page drifts (1 px per 125 ms diagonal, pong bounce) with the ink
-      // >= 3 px from the edges and >= 17 px from the top (clear of the indicator); the neighbour
-      // sliding in rides the same offset: the burn-in fix. A sensor with no value draws the stock
-      // loader until 300 s of uptime, then "E2" (make_page).
+      // at a time as outline HUGE digits + the stock label icon ("%" on RH), PM1.0 (ours) -> PM2.5
+      // -> PM10 -> CO2 -> T -> RH -> info (ours), starting on PM2.5 like stock. PageSlider = the
+      // stock slides FUN_400e3e28 / FUN_400e3c18: pages 160 px apart, pushed 10 px per 20 ms frame
+      // (snap <= 10 px), the ring wraps info -> PM1.0. The page changes on a touch only
+      // (tap/swipe toward the left end = next; no auto carousel), except the info page, which
+      // slides on to PM1.0 by itself after 10 s; a touch during a slide chains one more page
+      // (tap/swipe only, no finger-follow drag). The 7-dot indicator shows for 3 s after a touch,
+      // never permanently. No wifi/battery overlay: fixed pixels would burn in. The whole sensor
+      // page drifts (1 px per 125 ms diagonal, pong bounce) with the ink >= 3 px from the edges
+      // and >= 17 px from the top (clear of the indicator); the neighbour sliding in rides the
+      // same offset: the burn-in fix. The info page is plain text that stays put (it never stays
+      // on screen longer than 10 s). A sensor with no value draws the stock loader until 300 s
+      // of uptime, then "E2" (make_page).
       const int W = it.get_width(), H = it.get_height();
       const uint32_t now = millis();
       const bool net = network::is_connected();
@@ -897,25 +909,30 @@ display:
           cgdn1_led::Sensor led;  // the status LED shows the shown page's level (stock)
         };
         const Entry pg[] = {
+            {PageKind::PM1, id(pm1).state, cgdn1_led::SENSOR_PM1},
             {PageKind::PM25, id(pm25).state, cgdn1_led::SENSOR_PM25},
             {PageKind::PM10, id(pm10).state, cgdn1_led::SENSOR_PM10},
             {PageKind::CO2, id(co2).state, cgdn1_led::SENSOR_CO2},
             {PageKind::TEMP, id(temp_comp).state, cgdn1_led::SENSOR_TEMP},
             {PageKind::HUMI, id(rh_comp).state, cgdn1_led::SENSOR_HUMI},
         };
-        static constexpr int COUNT = 5, STEP_MS = 125;
+        static constexpr int INFO = 6, COUNT = 7, FIRST = 1, STEP_MS = 125;  // FIRST = PM2.5
+        static constexpr uint32_t INFO_DWELL_MS = 10000;
         static bool started = false;
         if (!started) {
           started = true;
-          id(pages).begin(COUNT, now);
+          id(pages).begin(COUNT, now, FIRST);
+          id(pages).set_dwell(INFO, INFO_DWELL_MS);
         }
         id(pages).update(now);
         const int shown = id(pages).page();  // flips halfway through a slide: LED and indicator
-        id(led_shown) = pg[shown].led;
+        id(led_shown) = shown == INFO ? cgdn1_led::SENSOR_NONE : pg[shown].led;  // LED off on info
         // Bounce range from the ink of the page the slide is heading to, from its first frame on
         // (page() would swap ranges halfway, mid-screen). A narrower arriving range pulls the
         // offset in <= 3 px per frame while sliding (no sideways jump); settled, it clamps at once.
-        const int tgt = id(pages).target_page();
+        // On the info page (which does not drift) the offset keeps bouncing in the range of the
+        // page after it, so that one slides in without a jump.
+        const int tgt = id(pages).target_page() == INFO ? (INFO + 1) % COUNT : id(pages).target_page();
         const BounceRange b = bounce_range(page_ink(make_page(pg[tgt].kind, pg[tgt].value, now)), W, H);
         static Bouncer pos;
         pos.step_range(now, b.min_x, b.max_x, b.min_y, b.max_y, STEP_MS,
@@ -924,9 +941,66 @@ display:
         for (int k = 0; k < COUNT; k++) {
           const int px = id(pages).page_x(k);
           if (px <= -W || px >= W) continue;  // only the shown page and the one sliding in/out
-          draw_page(make_page(pg[k].kind, pg[k].value, now), pos.x + px, pos.y, plot);
+          if (k != INFO) {
+            draw_page(make_page(pg[k].kind, pg[k].value, now), pos.x + px, pos.y, plot);
+            continue;
+          }
+          // ---- info page: 7 rows of f_info (15 px pitch below the indicator), left text cut
+          // with ".." where it would run into the right-aligned part.
+          int row = 0;
+          auto line = [&](const char *left, const char *right = "") {
+            int x1, y1, rw = 0, lw, h;
+            if (*right) it.get_text_bounds(0, 0, right, id(f_info), TextAlign::TOP_LEFT, &x1, &y1, &rw, &h);
+            const int room = W - 4 - (rw ? rw + 6 : 0);
+            char cut[40];
+            snprintf(cut, sizeof(cut), "%s", left);
+            for (size_t n = strlen(cut);; n--) {
+              it.get_text_bounds(0, 0, cut, id(f_info), TextAlign::TOP_LEFT, &x1, &y1, &lw, &h);
+              if (lw <= room || n < 3) break;
+              strcpy(cut + n - 3, "..");  // drop one more character of the original each pass
+            }
+            const int y = 18 + 15 * row++;
+            it.print(px + 2, y, id(f_info), TextAlign::TOP_LEFT, cut);
+            if (*right) it.print(px + W - 2, y, id(f_info), TextAlign::TOP_RIGHT, right);
+          };
+          char l[48], r[16];
+          line("ESPHome " ESPHOME_VERSION);
+          const time_t built = App.get_build_time();
+          struct tm bt;
+          localtime_r(&built, &bt);
+          strftime(l, sizeof(l), "built %Y-%m-%d %H:%M", &bt);
+          line(l);
+          char mac[MAC_ADDRESS_PRETTY_BUFFER_SIZE];
+          snprintf(l, sizeof(l), "MAC %s", get_mac_address_pretty_into_buffer(mac));
+          line(l);
+          auto *wf = wifi::global_wifi_component;
+          if (net) {
+            char ssid[wifi::SSID_BUFFER_SIZE];
+            snprintf(l, sizeof(l), "WiFi %s", wf->wifi_ssid_to(ssid));
+            snprintf(r, sizeof(r), "%d dBm", (int) wf->wifi_rssi());
+            line(l, r);
+            snprintf(l, sizeof(l), "IP %s", ip4());
+            line(l);
+          } else {
+            line("WiFi not connected");
+          }
+          if (wf->has_ap()) {
+            static const std::string ap_ssid = wf->get_ap().get_ssid().str();
+            snprintf(l, sizeof(l), "AP %s", ap_ssid.c_str());
+            line(l, wf->is_ap_active() ? "active" : "standby");
+          } else {
+            line("AP fallback: off");
+          }
+          const uint32_t up = (uint32_t) (millis_64() / 60000);  // minutes
+          if (up >= 24 * 60)
+            snprintf(r, sizeof(r), "up %ud %02uh", (unsigned) (up / 1440), (unsigned) (up / 60 % 24));
+          else if (up >= 60)
+            snprintf(r, sizeof(r), "up %uh %02um", (unsigned) (up / 60), (unsigned) (up % 60));
+          else
+            snprintf(r, sizeof(r), "up %um", (unsigned) up);
+          line(id(ble).is_active() ? "BT proxy on" : "BT proxy off", r);
         }
-        if (id(pages).indicator_visible(now)) draw_page_dots(shown, plot);
+        if (id(pages).indicator_visible(now)) draw_page_dots(shown, COUNT, plot);
         return;
       }
 
