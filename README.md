@@ -65,6 +65,67 @@ not retained, to `cgdn1/notify` (the prefix is the device name):
 - `cgdn1/notify/clear`: an id removes that message, an empty payload removes all.
 - The text takes the largest font (24/20/17/14 px) that fits it whole; ASCII and Cyrillic.
 
+<details>
+<summary>Example: Home Assistant automation (ask to lock the front door)</summary>
+
+After the door has been unlocked for 10 min it asks on the screen: tap left locks it, tap right
+ignores it. If someone locks it before answering, the question is cleared from the screen.
+`lock.front_door` is a placeholder.
+
+```yaml
+alias: Front door - ask on the air monitor to lock it
+mode: single
+triggers:
+  - trigger: state
+    entity_id: lock.front_door
+    to: unlocked
+    for: "00:10:00"
+actions:
+  - action: mqtt.publish
+    data:
+      topic: cgdn1/notify
+      payload: >-
+        {{ {"id": "front_door",
+            "title": "Front door",
+            "text": "Unlocked for 10 min. Lock it?",
+            "actions": {"tap_left": "Lock", "tap_right": "Ignore"},
+            "timeout": 120} | to_json }}
+  # An answer on the screen, or someone locking it by hand.
+  - wait_for_trigger:
+      - trigger: mqtt
+        id: answer
+        topic: cgdn1/notify/response
+        value_template: "{{ value_json.id }}"
+        payload: front_door
+      - trigger: state
+        id: locked
+        entity_id: lock.front_door
+        to: locked
+    timeout: "00:02:30"  # fallback: the device itself reports "timeout" after 120 s
+    continue_on_timeout: false
+  - choose:
+      - conditions: "{{ wait.trigger.id == 'locked' }}"
+        sequence:
+          - action: mqtt.publish
+            data:
+              topic: cgdn1/notify/clear
+              payload: front_door
+      - conditions: "{{ wait.trigger.payload_json.response == 'tap_left' }}"
+        sequence:
+          - action: lock.lock
+            target:
+              entity_id: lock.front_door
+          - action: mqtt.publish
+            data:
+              topic: cgdn1/notify
+              payload: '{"text": "Front door locked", "timeout": 4}'
+```
+
+`to_json` keeps the payload valid whatever the text holds; the `value_template` / `payload` pair
+makes the wait react to this question's id only.
+
+</details>
+
 ## Development
 
 ```sh
