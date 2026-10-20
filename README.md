@@ -17,7 +17,7 @@ Installed over the air from the stock firmware, without opening the case. See
 | Battery     | Voltage, stock percent table, charge current, charging state                 |
 | Display     | Stock pages and digits plus a PM1.0 page, push slide on touch, burn-in drift, brightness, night mode; an info page (version, MAC, WiFi/IP, fallback AP, Bluetooth, uptime) that moves on after 10 s |
 | Touch       | Taps/swipes/long touch from the ATtiny814 slider, as HA events               |
-| Messages    | Notifications and questions over MQTT, answered by a tap or swipe (see below) |
+| Messages    | Optional: notifications and questions over MQTT, answered by a tap or swipe (see below) |
 | LED         | Stock level colours for the reading on screen (PM standard selectable)       |
 | Power       | Back button: click toggles the display, long press powers off (on battery)   |
 | Safety      | Trial-mode install, "Boot other firmware slot" button                        |
@@ -34,6 +34,7 @@ components/              external components
   cgdn1_led              stock RGB status LED logic
   cgdn1_night            stock night mode window
   cgdn1_notify           MQTT screen messages: queue, answers, word wrap
+packages/mqtt_*.yaml     optional MQTT screen messages (substitution mqtt_messages)
 tools/cgdn1_ota_push.py  push an image to the stock firmware over local MQTT
 tools/gen_stock_icons.py regenerate stock_icons.h from a stock firmware image
 tests/                   host tests (g++ for the C++ logic, image/partition checks)
@@ -42,9 +43,10 @@ docs/                    install guide, hardware map
 
 ## Screen messages over MQTT
 
-Next to the HA API the device connects to an MQTT broker (`mqtt_*` in `secrets.yaml`) for
-on-screen messages only (no discovery; HA keeps using the API). Publish, not retained, to
-`cgdn1/notify`:
+Optional, off by default. Build with `esphome -s mqtt_messages true compile cgdn1.yaml` and
+fill in the `mqtt_*` entries in `secrets.yaml`: next to the HA API the device then connects to
+that MQTT broker for on-screen messages only (no discovery; HA keeps using the API). Publish,
+not retained, to `cgdn1/notify` (the prefix is the device name):
 
 ```json
 {"id": "door", "title": "Front door", "text": "Open for 10 min. Lock it?",

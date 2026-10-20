@@ -4,6 +4,13 @@ substitutions:
   # "true" for the first, reversible install (every reboot returns to stock), see docs/install.md:
   #   esphome -s trial_mode true compile cgdn1.yaml
   trial_mode: "false"
+  # "true" for on-screen notifications and questions over MQTT (README; needs the mqtt_*
+  # secrets, packages/mqtt_true.yaml):
+  #   esphome -s mqtt_messages true compile cgdn1.yaml
+  mqtt_messages: "false"
+
+packages:
+  mqtt_messages: !include packages/mqtt_${mqtt_messages}.yaml
 
 esphome:
   name: ${name}
@@ -75,8 +82,8 @@ cgdn1_led:
 # "Night mode" below.
 cgdn1_night:
 
-# MQTT notifications and questions on the screen (components/cgdn1_notify/notify.h, ours);
-# wired up under "MQTT" below.
+# Notifications and questions on the screen (components/cgdn1_notify/notify.h, ours); fed over
+# MQTT by packages/mqtt_true.yaml (substitution mqtt_messages), shown by the display lambda.
 cgdn1_notify:
 
 wifi:
@@ -110,73 +117,6 @@ api:
   # Default reboot_timeout (15 min): with no API client ESPHome reboots (in trial mode -> stock).
   encryption:
     key: !secret api_key
-
-# --- MQTT (ours): notifications and questions on the screen ----------------------------------
-# Alongside the HA API, only for the screen messages: discovery off (HA already has every entity
-# over the API), no log topic, and no reboot when the broker is away (the 15 min default would
-# restart the device). ESPHome still publishes entity states under cgdn1/ and the online/offline
-# status on cgdn1/status.
-#  - cgdn1/notify (in): JSON {"text": "..", "title": "..", "id": "..", "timeout": s,
-#    "wake": bool, "actions": {"tap_left": "Yes", "swipe_right": "No", ..}}, or plain text (= a
-#    notification). Only "text" is needed. Without actions: a notification, any gesture
-#    dismisses it, 10 s by default. With actions (tap_left / tap_centre / tap_right / swipe_left /
-#    swipe_right -> label): a question, only a mapped gesture answers it, 60 s by default.
-#    timeout 1..3600 s, counted from when it is first on screen; wake (default true) lights a
-#    dark panel for it. One shown + 4 waiting, in arrival order; the same id replaces a queued
-#    one in place. Do not publish it retained (it would come back on every reconnect).
-#  - cgdn1/notify/clear (in): an id removes that message; an empty payload removes all.
-#  - cgdn1/notify/response (out): a message with an id reports how it left the screen:
-#    {"id": "..", "response": "tap_left", "label": "Yes"}, or response dismissed / timeout /
-#    cleared / dropped (queue full: the oldest waiting one).
-mqtt:
-  id: mqtt_client
-  broker: !secret mqtt_broker
-  username: !secret mqtt_username
-  password: !secret mqtt_password
-  discovery: false
-  log_topic: null
-  reboot_timeout: 0s
-  on_message:
-    - topic: cgdn1/notify
-      then:
-        - lambda: |-
-            cgdn1_notify::Message m;
-            if (!x.empty() && x[0] == '{') {
-              const bool ok = json::parse_json(x, [&m](JsonObject root) -> bool {
-                m.id = root["id"] | "";
-                m.title = root["title"] | "";
-                m.text = root["text"] | "";
-                m.timeout_s = root["timeout"] | 0;
-                m.wake = root["wake"] | true;
-                JsonObject actions = root["actions"];  // null (no pairs) when missing
-                for (JsonPair kv : actions) {
-                  const int g = cgdn1_notify::gesture_index(kv.key().c_str());
-                  if (g < 0)
-                    ESP_LOGW("notify", "unknown action gesture '%s' skipped", kv.key().c_str());
-                  else
-                    m.labels[g] = kv.value() | "";
-                }
-                return true;
-              });
-              if (!ok) {
-                ESP_LOGW("notify", "not JSON, ignored: %s", x.c_str());
-                return;
-              }
-            } else {
-              m.text = x;  // plain text: a notification
-            }
-            const bool question = m.question();
-            const std::string mid = m.id;
-            if (id(notify_q).push(std::move(m)))
-              ESP_LOGI("notify", "%s '%s' queued (%u up)", question ? "question" : "notification", mid.c_str(),
-                       (unsigned) id(notify_q).size());
-            else
-              ESP_LOGW("notify", "no text, ignored: %s", x.c_str());
-        - script.execute: notify_sync
-    - topic: cgdn1/notify/clear
-      then:
-        - lambda: id(notify_q).clear(x);
-        - script.execute: notify_sync
 
 # Local wall clock for night mode, from Home Assistant over the API (its time zone too; stock
 # uses SNTP + its own time zone setting). Until the first sync the clock is invalid and night
@@ -499,14 +439,18 @@ script:
           bool changed = fresh || nq.size() != last_size;
           last_size = nq.size();
           if (fresh && nq.current().wake && !id(oled).is_on()) id(display_switch).turn_on();
-          auto *mq = mqtt::global_mqtt_client;
           for (const auto &o : nq.take_outcomes()) {
             changed = true;
             const std::string j = o.json();
+          #ifdef USE_MQTT  // mqtt_messages "true"
+            auto *mq = mqtt::global_mqtt_client;
             if (!mq->publish(mq->get_topic_prefix() + "/notify/response", j))
               ESP_LOGW("notify", "response not sent (MQTT down): %s", j.c_str());
             else
               ESP_LOGI("notify", "response %s", j.c_str());
+          #else
+            ESP_LOGI("notify", "response %s", j.c_str());
+          #endif
           }
           if (changed && id(oled).is_on()) id(oled).update();
 
@@ -584,7 +528,7 @@ event:
 #  - display off: any touch turns it on and does nothing else (stock: a touch on the dark panel
 #    sets the display status back to on, FUN_400e36a0 bits 0x9c -> FUN_400e98e8(0))
 #  - long_touch (7.2 s still): HA event only (stock: network reset, not reproduced).
-#  - an MQTT message on screen (see "MQTT"): the gesture goes to it (answer / dismiss) and does
+#  - an MQTT message on screen (packages/mqtt_true.yaml): the gesture goes to it (answer / dismiss) and does
 #    not change the page.
 # Every gesture is also an HA event ("Touch"), the wake-up one included.
 cgdn1_touch:
