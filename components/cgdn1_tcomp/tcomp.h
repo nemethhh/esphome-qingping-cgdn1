@@ -17,6 +17,8 @@
 #include <cmath>
 #include <cstdint>
 
+#include "heat.h"
+
 namespace tcomp {
 
 // ---- curves: y(x) = (k + a1*x + a2*x^2 + a3*x^3) / 10000  [degC] -------------------------
@@ -164,8 +166,9 @@ struct Out {
 // ---- one 1-second step ------------------------------------------------------------------
 // t_raw / rh_raw: SHT4x degC / %RH. cstate: 0 battery, 1 charging, 2 USB + charge done.
 // bright_target: 100 while the display is on, else 0. batt_pct: 0..100.
+// heat_c: measured display + Bluetooth heat [degC] (heat.h). NaN -> stock bright() term.
 inline Out step(State &s, float t_raw, float rh_raw, int cstate, int bright_target, int batt_pct,
-                const Calib &cal = Calib()) {
+                const Calib &cal = Calib(), float heat_c = NAN) {
   // FUN_40225f40(S, 1)
   s.on = (int16_t) (s.on + 1 > ON_MAX ? ON_MAX : s.on + 1);
   // FUN_400e8adc(S, cstate, 1, batt_pct); x is taken from the PREVIOUS state
@@ -202,7 +205,8 @@ inline Out step(State &s, float t_raw, float rh_raw, int cstate, int bright_targ
   const double cc = s.cst == 1 ? charging(xc) : chargingdone(xc);
   float t = (float) ((double) tr + preheating(s.on));
   t = (float) ((double) t + discharging(s.dis));
-  t = (float) ((double) t + bright(s.bacc / 20));
+  // Measured mode: heat_c (heat.h) replaces the stock bright() ramp; bacc still advances above.
+  t = (float) ((double) t + (std::isnan(heat_c) ? bright(s.bacc / 20) : -(double) heat_c));
   const float t_h = t;
   t = (float) ((double) (300 - bs) * cc / 300.0 + (double) t);
   if (s.last > -100.0f) {  // slew limiter: a jump of more than 3 C moves only 0.3 C per second
@@ -285,13 +289,19 @@ struct Inputs {
   float batt_pct = NAN;   // battery level, %
   int bright_target = 0;  // 100 while the display is on, else 0
   Calib cal;
+  float level = 6;         // "Display brightness" 1..6 (heat model drive)
+  bool ble = false;        // Bluetooth proxy active
+  bool measured = false;   // true: Measured heat model replaces stock bright(); false: Stock
+  heat::Params heat;       // heat model parameters (NaN fields -> defaults)
 };
 
 class Engine {
  public:
   // Call once per second. Returns false (and steps nothing) while T or RH is not available.
   // The first valid call restores the model from `saved` (stock FUN_400e8330).
-  bool tick(const Inputs &in, const Saved &saved) {
+  // The heat model (heat.h) advances on every valid tick, whichever mode is selected, so
+  // switching Stock <-> Measured never resets it; `heat_saved` is its restore record.
+  bool tick(const Inputs &in, const Saved &saved, const heat::Saved *heat_saved = nullptr) {
     this->ticks_++;
     if (std::isnan(in.t_raw) || std::isnan(in.rh_raw)) return false;
     if (!this->ready_) {
@@ -299,19 +309,44 @@ class Engine {
         init(this->s_, saved.on, saved.bright, saved.t100, saved.chg, t100(in.t_raw));
       else
         init(this->s_, 0, 0, t100(in.t_raw), -1, t100(in.t_raw));
+      // Heat state: with a valid stock record AND a heat record, restore it scaled like stock
+      // init() scales bacc (a shorter `on` = more of the self-heat has decayed; scale clamped to
+      // [0, 1] against a corrupt record); otherwise seed it from the stock brightness
+      // accumulator (0 on a cold start): p = bacc/2000, q = p * level weight of this tick.
+      this->heat_restored_ =
+          saved.magic == SAVED_MAGIC && heat_saved != nullptr && heat_saved->magic == heat::HEAT_MAGIC;
+      if (this->heat_restored_) {
+        const float scale =
+            this->s_.on < saved.on ? 1.0f - (float) (saved.on - this->s_.on) / (float) ON_MAX : 1.0f;
+        this->hs_ = heat::restore(*heat_saved, clampv(scale, 0.0f, 1.0f));
+      } else {
+        this->hs_ = heat::State();
+        this->hs_.p_a = this->hs_.p_b = (float) this->s_.bacc / (float) BACC_MAX;
+        this->hs_.q_a = this->hs_.q_b = this->hs_.p_a * heat::level_weight(in.level);
+      }
       this->cstate_ = this->s_.cst;
       this->ready_ = true;
     }
+    this->hp_ = heat::sanitize(in.heat);
+    heat::step(this->hs_, this->hp_, in.bright_target > 0, in.level, in.ble);
     this->cstate_ = charge_state(this->cstate_, in.usb, in.vbat_mv, in.ichg_ma);
     const int pct = std::isnan(in.batt_pct) ? 100 : (int) in.batt_pct;  // stock default 100
     this->t100_ = t100(in.t_raw);
-    this->out_ = step(this->s_, in.t_raw, in.rh_raw, this->cstate_, in.bright_target, pct, in.cal);
+    this->out_ = step(this->s_, in.t_raw, in.rh_raw, this->cstate_, in.bright_target, pct, in.cal,
+                          in.measured ? heat::display_heat(this->hs_, this->hp_) + heat::bt_heat(this->hs_, this->hp_)
+                                      : NAN);
     return true;
   }
   bool ready() const { return this->ready_; }
   const Out &out() const { return this->out_; }
   const State &state() const { return this->s_; }
   int cstate() const { return this->cstate_; }
+  const heat::State &heat_state() const { return this->hs_; }
+  // true: the heat state came from the heat record; false: seeded (cold start or no/unknown record)
+  bool heat_restored() const { return this->heat_restored_; }
+  float display_heat() const { return heat::display_heat(this->hs_, this->hp_); }
+  float bt_heat() const { return heat::bt_heat(this->hs_, this->hp_); }
+  heat::Saved heat_snapshot() const { return heat::snapshot(this->hs_); }
   uint32_t ticks() const { return this->ticks_; }
   // What stock's save (FUN_400e9224) would write now.
   Saved snapshot() const {
@@ -328,11 +363,14 @@ class Engine {
 
  private:
   State s_;
+  heat::State hs_;
+  heat::Params hp_;
   Out out_{NAN, NAN, NAN};
   int cstate_ = 2;
   int t100_ = 0;
   uint32_t ticks_ = 0;
   bool ready_ = false;
+  bool heat_restored_ = false;
 };
 
 }  // namespace tcomp

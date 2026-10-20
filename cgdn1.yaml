@@ -12,7 +12,10 @@ esphome:
   # order: this trigger (600) -> globals (800, queues the NVS write) -> preferences (1000, sync).
   on_shutdown:
     - lambda: |-
-        if (id(tc_engine).ready()) id(tc_saved) = id(tc_engine).snapshot();
+        if (id(tc_engine).ready()) {
+          id(tc_saved) = id(tc_engine).snapshot();
+          id(tc_heat_saved) = id(tc_engine).heat_snapshot();
+        }
 
 esp32:
   board: esp32dev
@@ -110,6 +113,23 @@ api:
 time:
   - platform: homeassistant
     id: ha_time
+
+# Bluetooth proxy for Home Assistant (not in stock; stock's BLE is HomeKit/MiIO pairing only).
+# BLE shares the radio with WiFi (software coexistence) and keeps the CPU busier, so it adds
+# self-heat: the "Bluetooth" switch below stops/starts the BLE stack at runtime (also used by the
+# self-heating tests). Always on after a boot. Costs ~440 KB of the app slot.
+esp32_ble:
+  id: ble
+  enable_on_boot: true
+
+esp32_ble_tracker:
+
+# Passive: advertisements only, no GATT connections through this device. With active
+# connections the ESP32 BT controller blob asserted (r_assert in r_lld_con_start <-
+# hci_le_create_con_cmd_handler) after ~2 h of Home Assistant retrying a device that kept
+# failing to connect (every ~20 s). Connection-based devices need another HA Bluetooth adapter.
+bluetooth_proxy:
+  active: false
 
 button:
   - platform: restart
@@ -312,6 +332,23 @@ sensor:
           static constexpr float ADC_FLOOR_MA = 39.0f;  // ~78 mV floor at 2.5 dB (see above)
           return std::isnan(x) ? x : std::max(0.0f, x - ADC_FLOOR_MA);
 
+  # Heat-model diagnostics (ours, not stock): the display and Bluetooth heat the Measured model
+  # currently subtracts, published by the 1 s interval every 10 s (NaN until the engine is ok).
+  - platform: template
+    id: hc_display_heat
+    name: "Display heat estimate"
+    unit_of_measurement: "°C"
+    accuracy_decimals: 2
+    entity_category: diagnostic
+    update_interval: never
+  - platform: template
+    id: hc_bt_heat
+    name: "Bluetooth heat estimate"
+    unit_of_measurement: "°C"
+    accuracy_decimals: 2
+    entity_category: diagnostic
+    update_interval: never
+
   - platform: wifi_signal
     id: wifi_rssi
     name: "WiFi signal"
@@ -493,10 +530,16 @@ globals:
   - id: tc_saved
     type: tcomp::Saved
     restore_value: true
+  # Restore record of the Measured heat model (components/cgdn1_tcomp/heat.h, ours, not stock):
+  # the two display cascades (p, q) and the Bluetooth lag, so the warm-up survives a reboot/OTA.
+  # NVS like tc_saved, refreshed every 5 min + on clean shutdown.
+  - id: tc_heat_saved
+    type: tcomp::heat::Saved
+    restore_value: true
   # Display hook: mirrors id(oled).is_on(), refreshed by the 1 s interval below (stock feeds
   # brightness target 100 while the panel is on, 0 when off; the -1 C term ramps 20 s/%).
-  # Deliberately on/off only: stock never varies the OLED contrast, so its model has no
-  # brightness-level term; "Display brightness" does not feed it.
+  # Feeds the Stock model only (on/off, stock never varies the OLED contrast); the Measured
+  # model takes "Display brightness" (level) itself, see the "Display heat" numbers.
   - id: tc_display_on
     type: bool
     initial_value: "true"
@@ -552,6 +595,88 @@ number:
     max_value: 20
     step: 0.1
     initial_value: 0
+    optimistic: true
+    restore_value: true
+    mode: box
+  # Measured heat model (ours, not stock; selected by "Heat model"): the display and Bluetooth
+  # self-heating subtracted from T. Defaults = an on/off test fit of one unit (Bluetooth-on display
+  # edges, see heat.h) and equal heat::Params in components/cgdn1_tcomp/heat.h; NaN falls back
+  # to them there. Saved values win over these on an already-flashed device.
+  # Display heat at brightness 6: steady-state rise of the sensor.
+  - platform: template
+    id: hc_a6
+    name: "Display heat"
+    entity_category: config
+    unit_of_measurement: "°C"
+    min_value: 0
+    max_value: 5
+    step: 0.05
+    initial_value: 1.5
+    optimistic: true
+    restore_value: true
+    mode: box
+  # Display heat at brightness 1 (levels in between are interpolated by panel current).
+  - platform: template
+    id: hc_a1
+    name: "Display heat at brightness 1"
+    entity_category: config
+    unit_of_measurement: "°C"
+    min_value: 0
+    max_value: 5
+    step: 0.05
+    initial_value: 1.25
+    optimistic: true
+    restore_value: true
+    mode: box
+  # First display lag (fast part of the warm-up).
+  - platform: template
+    id: hc_tau_d1
+    name: "Display heat lag"
+    entity_category: config
+    unit_of_measurement: "s"
+    min_value: 10
+    max_value: 600
+    step: 5
+    initial_value: 110
+    optimistic: true
+    restore_value: true
+    mode: box
+  # Second display lag (slow soak of the case).
+  - platform: template
+    id: hc_tau_d2
+    name: "Display heat time"
+    entity_category: config
+    unit_of_measurement: "s"
+    min_value: 60
+    max_value: 3600
+    step: 10
+    initial_value: 1130
+    optimistic: true
+    restore_value: true
+    mode: box
+  # Steady-state rise while the Bluetooth stack is active.
+  - platform: template
+    id: hc_a_bt
+    name: "Bluetooth heat"
+    entity_category: config
+    unit_of_measurement: "°C"
+    min_value: 0
+    max_value: 3
+    step: 0.05
+    initial_value: 1.6
+    optimistic: true
+    restore_value: true
+    mode: box
+  # Bluetooth lag.
+  - platform: template
+    id: hc_tau_bt
+    name: "Bluetooth heat time"
+    entity_category: config
+    unit_of_measurement: "s"
+    min_value: 60
+    max_value: 3600
+    step: 10
+    initial_value: 1070
     optimistic: true
     restore_value: true
     mode: box
@@ -624,32 +749,48 @@ interval:
           in.ichg_ma = id(charge_current).state;
           in.batt_pct = id(battery_level).state;
           id(tc_display_on) = id(oled).is_on();
+          in.level = id(display_level).state;
+          in.ble = id(ble).is_active();
+          auto idx = id(hc_model).active_index();
+          in.measured = !idx.has_value() || *idx == 1;  // no value yet -> Measured
+          in.heat.a6 = id(hc_a6).state;
+          in.heat.a1 = id(hc_a1).state;
+          in.heat.tau_d1 = id(hc_tau_d1).state;
+          in.heat.tau_d2 = id(hc_tau_d2).state;
+          in.heat.a_bt = id(hc_a_bt).state;
+          in.heat.tau_bt = id(hc_tau_bt).state;
+          in.heat.bt_comp = id(hc_bt_comp).state;
           in.bright_target = id(tc_display_on) ? 100 : 0;  // on/off only, not "Display brightness"
           const float toff = id(tc_temp_offset).state, rhoff = id(tc_rh_offset).state;
           in.cal.t_off_c100 = std::isnan(toff) ? 0 : (int) lroundf(toff * 100.0f);
           in.cal.rh_off_d10 = std::isnan(rhoff) ? 0 : (int) lroundf(rhoff * 10.0f);
-          const bool ok = tc.tick(in, id(tc_saved));
+          const bool ok = tc.tick(in, id(tc_saved), &id(tc_heat_saved));
           const auto &st = tc.state();
           if (ok && !was_ready)
-            ESP_LOGI("tcomp", "start: %s on=%d chg=%d cst=%d bacc=%d (raw %.2f C)",
+            ESP_LOGI("tcomp", "start: %s on=%d chg=%d cst=%d bacc=%d, heat %s (raw %.2f C)",
                      id(tc_saved).magic == tcomp::SAVED_MAGIC ? "restored" : "cold",
-                     st.on, st.chg, st.cst, st.bacc, in.t_raw);
+                     st.on, st.chg, st.cst, st.bacc, tc.heat_restored() ? "restored" : "seeded", in.t_raw);
           if (!tc.ready() && tc.ticks() == 60)
             ESP_LOGW("tcomp", "no SHT4x reading after 60 s: compensated T/RH unavailable");
           if (tc.ticks() % 10 == 0) {
             if (ok) {
               id(temp_comp).publish_state(tc.out().t);
               id(rh_comp).publish_state(tc.out().rh);
+              id(hc_display_heat).publish_state(tc.display_heat());
+              id(hc_bt_heat).publish_state(tc.bt_heat());
             } else if (!std::isnan(id(temp_comp).state)) {
               id(temp_comp).publish_state(NAN);
               id(rh_comp).publish_state(NAN);
+              id(hc_display_heat).publish_state(NAN);
+              id(hc_bt_heat).publish_state(NAN);
             }
           }
           if (ok && tc.ticks() % 300 == 0) {
             id(tc_saved) = tc.snapshot();
-            ESP_LOGD("tcomp", "on=%d chg=%d dis=%d cst=%d bacc=%d: raw %.2f C %.1f%% -> %.2f C %.1f%%",
-                     st.on, st.chg, st.dis, st.cst, st.bacc, in.t_raw, in.rh_raw,
-                     tc.out().t, tc.out().rh);
+            id(tc_heat_saved) = tc.heat_snapshot();
+            ESP_LOGD("tcomp", "on=%d chg=%d dis=%d cst=%d bacc=%d H_d=%.2f H_bt=%.2f: raw %.2f C %.1f%% -> %.2f C %.1f%%",
+                     st.on, st.chg, st.dis, st.cst, st.bacc, tc.display_heat(), tc.bt_heat(),
+                     in.t_raw, in.rh_raw, tc.out().t, tc.out().rh);
           }
 
 # --- On-board OLED (components/cgdn1_display) ---------------------------------------
@@ -813,6 +954,19 @@ output:
     frequency: 5000Hz
 
 select:
+  # Temperature model (ours, not stock): "Stock" = the original 4.8.5 brightness/charge terms
+  # only, "Measured" = adds the display (brightness-dependent) and Bluetooth heat measured on
+  # the device ("Display heat" / "Bluetooth heat" numbers). Restored; Measured first boot.
+  - platform: template
+    id: hc_model
+    name: "Heat model"
+    icon: mdi:thermometer-lines
+    entity_category: config
+    options: ["Stock", "Measured"]
+    initial_option: "Measured"
+    optimistic: true
+    restore_value: true
+
   # PM2.5/PM10 LED thresholds (stock ucPm25Standard 0/1/2 tables; China = stock default):
   # PM2.5 <= 35/75/115/150/250 (China), 12/35/55/150/250 (US), 14/29/54/109 (EU);
   # PM10 < 50/150/250/350/420 (China), 54/154/254/354/424 (US), 24/49/89/179 (EU).
@@ -896,6 +1050,28 @@ switch:
     entity_category: config
     optimistic: true
     restore_mode: RESTORE_DEFAULT_OFF
+
+  # Apply the Bluetooth heat term in the Measured model (ours, not stock). Restored, on by default.
+  - platform: template
+    id: hc_bt_comp
+    name: "Bluetooth heat compensation"
+    icon: mdi:bluetooth-settings
+    entity_category: config
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+
+  # BLE stack (Bluetooth proxy) on/off at runtime. DISABLED restore: on after every boot.
+  - platform: template
+    id: ble_switch
+    name: "Bluetooth"
+    icon: mdi:bluetooth
+    entity_category: config
+    restore_mode: DISABLED
+    lambda: return id(ble).is_active();
+    turn_on_action:
+      - ble.enable:
+    turn_off_action:
+      - ble.disable:
 
   # Panel on/off (HA + the back-button click). DISABLED restore: no action at boot, the
   # driver starts lit. Off = controller display-off (AE), like stock's click.

@@ -12,7 +12,8 @@ Installed over the air from the stock firmware, without opening the case. See
 | Area        | What you get                                                                 |
 |-------------|------------------------------------------------------------------------------|
 | Sensors     | CO2 (SCD40), PM1.0/2.5/10 (PMSA003I), temperature/humidity (SHT4x)           |
-| T/RH        | Stock self-heating compensation, ported exactly (`cgdn1_tcomp`), plus offsets |
+| T/RH        | Stock self-heating compensation (`cgdn1_tcomp`) with a measured display + Bluetooth heat model, tunable from HA ("Heat model" Stock/Measured), plus offsets |
+| Bluetooth   | Passive Bluetooth proxy for Home Assistant (advertisements only), switchable |
 | Battery     | Voltage, stock percent table, charge current, charging state                 |
 | Display     | Stock pages and digits, push slide on touch, burn-in drift, brightness, night mode |
 | Touch       | Taps/swipes/long touch from the ATtiny814 slider, as HA events               |
@@ -28,7 +29,7 @@ components/              external components
   cgdn1_boot             power latch, stock partition table, power-off, trial mode, flash log
   cgdn1_display          OLED driver (two panel variants) + stock page renderer
   cgdn1_touch            ATtiny814 touch slider + gesture decoder
-  cgdn1_tcomp            stock T/RH self-heating compensation
+  cgdn1_tcomp            stock T/RH self-heating compensation + display/Bluetooth heat model
   cgdn1_led              stock RGB status LED logic
   cgdn1_night            stock night mode window
 tools/cgdn1_ota_push.py  push an image to the stock firmware over local MQTT
