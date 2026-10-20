@@ -17,6 +17,7 @@ Installed over the air from the stock firmware, without opening the case. See
 | Battery     | Voltage, stock percent table, charge current, charging state                 |
 | Display     | Stock pages and digits plus a PM1.0 page, push slide on touch, burn-in drift, brightness, night mode; an info page (version, MAC, WiFi/IP, fallback AP, Bluetooth, uptime) that moves on after 10 s |
 | Touch       | Taps/swipes/long touch from the ATtiny814 slider, as HA events               |
+| Messages    | Notifications and questions over MQTT, answered by a tap or swipe (see below) |
 | LED         | Stock level colours for the reading on screen (PM standard selectable)       |
 | Power       | Back button: click toggles the display, long press powers off (on battery)   |
 | Safety      | Trial-mode install, "Boot other firmware slot" button                        |
@@ -32,11 +33,35 @@ components/              external components
   cgdn1_tcomp            stock T/RH self-heating compensation + display/Bluetooth heat model
   cgdn1_led              stock RGB status LED logic
   cgdn1_night            stock night mode window
+  cgdn1_notify           MQTT screen messages: queue, answers, word wrap
 tools/cgdn1_ota_push.py  push an image to the stock firmware over local MQTT
 tools/gen_stock_icons.py regenerate stock_icons.h from a stock firmware image
 tests/                   host tests (g++ for the C++ logic, image/partition checks)
 docs/                    install guide, hardware map
 ```
+
+## Screen messages over MQTT
+
+Next to the HA API the device connects to an MQTT broker (`mqtt_*` in `secrets.yaml`) for
+on-screen messages only (no discovery; HA keeps using the API). Publish, not retained, to
+`cgdn1/notify`:
+
+```json
+{"id": "door", "title": "Front door", "text": "Open for 10 min. Lock it?",
+ "actions": {"tap_left": "Lock", "tap_right": "Ignore"}, "timeout": 60}
+```
+
+- Only `text` is needed; a plain-text payload works too. Without `actions` it is a notification
+  (10 s, any touch dismisses it); with `actions` it is a question (60 s) that only a mapped
+  gesture answers: `tap_left`, `tap_centre`, `tap_right`, `swipe_left` (toward the left end),
+  `swipe_right`. The labels show in a hint row at the bottom.
+- `timeout` 1-3600 s from when the message is first on screen; `wake` (default `true`) lights a
+  dark screen for it. One message shows, up to 4 wait; the same `id` replaces a queued one.
+- A message with an `id` reports how it ended on `cgdn1/notify/response`:
+  `{"id": "door", "response": "tap_left", "label": "Lock"}`, or `response` `dismissed`,
+  `timeout`, `cleared` or `dropped` (queue full).
+- `cgdn1/notify/clear`: an id removes that message, an empty payload removes all.
+- The text takes the largest font (24/20/17/14 px) that fits it whole; ASCII and Cyrillic.
 
 ## Development
 

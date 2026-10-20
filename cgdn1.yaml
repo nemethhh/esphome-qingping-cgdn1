@@ -50,7 +50,7 @@ external_components:
   - source:
       type: local
       path: components
-    components: [cgdn1_boot, cgdn1_tcomp, cgdn1_display, cgdn1_touch, cgdn1_led, cgdn1_night]
+    components: [cgdn1_boot, cgdn1_tcomp, cgdn1_display, cgdn1_touch, cgdn1_led, cgdn1_night, cgdn1_notify]
 
 # Power latch (GPIO23/13/18 HIGH from a global constructor, before anything else runs) and the
 # back-button long-press power-off. Must always be present: without it the unit switches itself off.
@@ -74,6 +74,10 @@ cgdn1_led:
 # Stock night mode (components/cgdn1_night/night.h: window test, 1 s tick); wired up under
 # "Night mode" below.
 cgdn1_night:
+
+# MQTT notifications and questions on the screen (components/cgdn1_notify/notify.h, ours);
+# wired up under "MQTT" below.
+cgdn1_notify:
 
 wifi:
   ssid: !secret wifi_ssid
@@ -106,6 +110,73 @@ api:
   # Default reboot_timeout (15 min): with no API client ESPHome reboots (in trial mode -> stock).
   encryption:
     key: !secret api_key
+
+# --- MQTT (ours): notifications and questions on the screen ----------------------------------
+# Alongside the HA API, only for the screen messages: discovery off (HA already has every entity
+# over the API), no log topic, and no reboot when the broker is away (the 15 min default would
+# restart the device). ESPHome still publishes entity states under cgdn1/ and the online/offline
+# status on cgdn1/status.
+#  - cgdn1/notify (in): JSON {"text": "..", "title": "..", "id": "..", "timeout": s,
+#    "wake": bool, "actions": {"tap_left": "Yes", "swipe_right": "No", ..}}, or plain text (= a
+#    notification). Only "text" is needed. Without actions: a notification, any gesture
+#    dismisses it, 10 s by default. With actions (tap_left / tap_centre / tap_right / swipe_left /
+#    swipe_right -> label): a question, only a mapped gesture answers it, 60 s by default.
+#    timeout 1..3600 s, counted from when it is first on screen; wake (default true) lights a
+#    dark panel for it. One shown + 4 waiting, in arrival order; the same id replaces a queued
+#    one in place. Do not publish it retained (it would come back on every reconnect).
+#  - cgdn1/notify/clear (in): an id removes that message; an empty payload removes all.
+#  - cgdn1/notify/response (out): a message with an id reports how it left the screen:
+#    {"id": "..", "response": "tap_left", "label": "Yes"}, or response dismissed / timeout /
+#    cleared / dropped (queue full: the oldest waiting one).
+mqtt:
+  id: mqtt_client
+  broker: !secret mqtt_broker
+  username: !secret mqtt_username
+  password: !secret mqtt_password
+  discovery: false
+  log_topic: null
+  reboot_timeout: 0s
+  on_message:
+    - topic: cgdn1/notify
+      then:
+        - lambda: |-
+            cgdn1_notify::Message m;
+            if (!x.empty() && x[0] == '{') {
+              const bool ok = json::parse_json(x, [&m](JsonObject root) -> bool {
+                m.id = root["id"] | "";
+                m.title = root["title"] | "";
+                m.text = root["text"] | "";
+                m.timeout_s = root["timeout"] | 0;
+                m.wake = root["wake"] | true;
+                JsonObject actions = root["actions"];  // null (no pairs) when missing
+                for (JsonPair kv : actions) {
+                  const int g = cgdn1_notify::gesture_index(kv.key().c_str());
+                  if (g < 0)
+                    ESP_LOGW("notify", "unknown action gesture '%s' skipped", kv.key().c_str());
+                  else
+                    m.labels[g] = kv.value() | "";
+                }
+                return true;
+              });
+              if (!ok) {
+                ESP_LOGW("notify", "not JSON, ignored: %s", x.c_str());
+                return;
+              }
+            } else {
+              m.text = x;  // plain text: a notification
+            }
+            const bool question = m.question();
+            const std::string mid = m.id;
+            if (id(notify_q).push(std::move(m)))
+              ESP_LOGI("notify", "%s '%s' queued (%u up)", question ? "question" : "notification", mid.c_str(),
+                       (unsigned) id(notify_q).size());
+            else
+              ESP_LOGW("notify", "no text, ignored: %s", x.c_str());
+        - script.execute: notify_sync
+    - topic: cgdn1/notify/clear
+      then:
+        - lambda: id(notify_q).clear(x);
+        - script.execute: notify_sync
 
 # Local wall clock for night mode, from Home Assistant over the API (its time zone too; stock
 # uses SNTP + its own time zone setting). Until the first sync the clock is invalid and night
@@ -416,6 +487,29 @@ script:
                 event_type: long_press
             - lambda: id(boot).power_off_long_press();
 
+  # MQTT screen messages: light the panel for a newly shown message (unless "wake": false),
+  # publish the outcomes, redraw right away on a change (not at the next 125 ms update). Run
+  # after every change (message in, clear, gesture) and by the 100 ms interval (timeouts).
+  - id: notify_sync
+    then:
+      - lambda: |-
+          auto &nq = id(notify_q);
+          static size_t last_size = 0;
+          const bool fresh = nq.take_new_current();
+          bool changed = fresh || nq.size() != last_size;
+          last_size = nq.size();
+          if (fresh && nq.current().wake && !id(oled).is_on()) id(display_switch).turn_on();
+          auto *mq = mqtt::global_mqtt_client;
+          for (const auto &o : nq.take_outcomes()) {
+            changed = true;
+            const std::string j = o.json();
+            if (!mq->publish(mq->get_topic_prefix() + "/notify/response", j))
+              ESP_LOGW("notify", "response not sent (MQTT down): %s", j.c_str());
+            else
+              ESP_LOGI("notify", "response %s", j.c_str());
+          }
+          if (changed && id(oled).is_on()) id(oled).update();
+
   # RGB status LED (stock RGB_LED_Task): pick the state, step the blink, write the duties. Run
   # every 100 ms by the interval below and right away by the OTA triggers.
   - id: led_refresh
@@ -490,6 +584,8 @@ event:
 #  - display off: any touch turns it on and does nothing else (stock: a touch on the dark panel
 #    sets the display status back to on, FUN_400e36a0 bits 0x9c -> FUN_400e98e8(0))
 #  - long_touch (7.2 s still): HA event only (stock: network reset, not reproduced).
+#  - an MQTT message on screen (see "MQTT"): the gesture goes to it (answer / dismiss) and does
+#    not change the page.
 # Every gesture is also an HA event ("Touch"), the wake-up one included.
 cgdn1_touch:
   id: touch
@@ -511,6 +607,11 @@ cgdn1_touch:
         event_type: !lambda return gesture;
     - lambda: |-
         if (id(touch_wake)) return;  // this touch woke the panel: consumed
+        if (id(notify_q).active()) {  // a message is up: the gesture is for it, not the pages
+          id(notify_q).gesture(gesture);
+          id(notify_sync).execute();
+          return;
+        }
         const uint32_t now = millis();
         if (gesture == "swipe_left" || gesture == "tap_left") id(pages).next(now);
         else if (gesture == "swipe_right" || gesture == "tap_right") id(pages).prev(now);
@@ -569,6 +670,9 @@ globals:
   # back-button push or click (stock idle counters sys+0xa0/+0xa4).
   - id: night_engine
     type: cgdn1_night::Engine
+  # MQTT screen messages (components/cgdn1_notify): the shown one + the waiting ones.
+  - id: notify_q
+    type: cgdn1_notify::Queue
   - id: night_activity_ms
     type: uint32_t
     initial_value: "0"
@@ -711,6 +815,10 @@ interval:
   - interval: 100ms  # status LED: stock RGB_LED_Task period (blink = 2 on / 3 off ticks)
     then:
       - script.execute: led_refresh
+  - interval: 100ms  # MQTT screen messages: timeouts
+    then:
+      - lambda: id(notify_q).tick(millis());
+      - script.execute: notify_sync
   # Slide cadence: stock redraws every 20 ms while a slide runs (10 px per frame). The slider is
   # time-based, so a late frame only skips a position; the driver sends only changed frames (idle
   # pages cost nothing here, the 125 ms display update_interval covers the bounce).
@@ -720,6 +828,8 @@ interval:
   - interval: 1s  # night mode: stock 1 s system task (FUN_400ea3f0)
     then:
       - lambda: |-
+          // An MQTT message on screen keeps the panel lit; night mode turns it off 5 s after.
+          if (id(notify_q).active() && id(oled).is_on()) id(night_activity_ms) = millis();
           cgdn1_night::Inputs in;
           in.enabled = id(night_switch).state;
           in.pages_shown = id(pages).begun();  // past the boot screen
@@ -820,13 +930,36 @@ font:
   - file: "gfonts://Roboto Condensed@900"
     id: f_small
     size: 16
-    glyphs: *text_glyphs
-  # Info page (ours): Bold (700) at 14 px fits 7 lines of ~25 characters; every printable ASCII
-  # character, so any network name shows as typed (other characters are skipped).
+    glyphs: &all_glyphs
+      - ' !"#$%&''()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_`abcdefghijklmnopqrstuvwxyz{|}~°µ³'
+      # Ukrainian + Russian Cyrillic, for MQTT messages
+      - 'АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЬЮЯЁЪЫЭабвгґдеєжзиіїйклмнопрстуфхцчшщьюяёъыэ'
+  # Info page and MQTT messages (ours): Bold (700) at 14 px fits 7 lines of ~25 characters;
+  # every printable ASCII character, so any network name shows as typed, + Cyrillic for messages
+  # (other characters are skipped). f_small (message hint row) and the message fonts below have
+  # the same set.
   - file: "gfonts://Roboto Condensed@700"
     id: f_info
     size: 14
-    glyphs: ' !"#$%&''()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_`abcdefghijklmnopqrstuvwxyz{|}~'
+    glyphs: *all_glyphs
+  # MQTT messages (ours): the title, and the text at the largest of 24 / 20 / 17 px (then f_info)
+  # that fits it whole.
+  - file: "gfonts://Roboto Condensed@900"
+    id: f_title
+    size: 18
+    glyphs: *all_glyphs
+  - file: "gfonts://Roboto Condensed@700"
+    id: f_msg24
+    size: 24
+    glyphs: *all_glyphs
+  - file: "gfonts://Roboto Condensed@700"
+    id: f_msg20
+    size: 20
+    glyphs: *all_glyphs
+  - file: "gfonts://Roboto Condensed@700"
+    id: f_msg17
+    size: 17
+    glyphs: *all_glyphs
 
 display:
   - platform: cgdn1_display
@@ -898,6 +1031,67 @@ display:
           it.printf(W / 2, 92, id(f_small), TextAlign::BASELINE_CENTER, "starting%.*s", (int) (now / 500 % 4), "...");
           it.print(W / 2, 112, id(f_small), TextAlign::BASELINE_CENTER, "network: connecting");
         }
+        return;
+      }
+
+      // ---- MQTT message (components/cgdn1_notify): over the pages while one is queued. Title
+      // (f_title) + rule, the text wrapped and centred in the largest font that fits it whole
+      // (24 / 20 / 17 / 14 px), a question's hint row (f_small: what tap/swipe left, centre, right
+      // do) above a rule, and a 2 px bar at the bottom for the time left. The pages keep their
+      // state underneath; the status LED is off.
+      if (id(notify_q).active()) {
+        using namespace cgdn1_notify;
+        auto &nq = id(notify_q);
+        nq.shown(now);
+        id(led_shown) = cgdn1_led::SENSOR_NONE;
+        const Message &m = nq.current();
+        auto width_in = [&it](font::Font *f) -> Measure {
+          return [&it, f](const std::string &s) {
+            int x1, y1, w, h;
+            it.get_text_bounds(0, 0, s.c_str(), f, TextAlign::TOP_LEFT, &x1, &y1, &w, &h);
+            return w;
+          };
+        };
+        const Measure m_title = width_in(id(f_title)), m_small = width_in(id(f_small));
+        auto fit = [](const std::string &s, int w, const Measure &mw) { return mw(s) <= w ? s : ellipsize(s, w, mw); };
+        int top = 2, bottom = H - 4;  // body rows go in [top, bottom), the bar takes the last 2 rows
+        if (!m.title.empty()) {
+          it.print(W / 2, top, id(f_title), TextAlign::TOP_CENTER, fit(m.title, W - 4, m_title).c_str());
+          it.horizontal_line(0, top + 21, W);
+          top += 25;
+        }
+        const Hints hn = hints(m);
+        if (!hn.empty()) {
+          bottom = H - 22;
+          it.horizontal_line(0, bottom, W);
+          const int slot = hn.centre.empty() ? W / 2 - 4 : W / 3 - 4, y = bottom + 2;
+          if (!hn.left.empty()) it.print(2, y, id(f_small), TextAlign::TOP_LEFT, fit(hn.left, slot, m_small).c_str());
+          if (!hn.centre.empty())
+            it.print(W / 2, y, id(f_small), TextAlign::TOP_CENTER, fit(hn.centre, slot, m_small).c_str());
+          if (!hn.right.empty())
+            it.print(W - 2, y, id(f_small), TextAlign::TOP_RIGHT, fit(hn.right, slot, m_small).c_str());
+          bottom -= 2;
+        }
+        // Largest font first; the smallest takes whatever is left (cut with ".." if need be).
+        const struct { font::Font *f; int pitch; } sizes[] = {
+            {id(f_msg24), 25}, {id(f_msg20), 21}, {id(f_msg17), 18}, {id(f_info), 15}};
+        std::vector<std::string> lines;
+        font::Font *bf = nullptr;
+        int pitch = 0;
+        for (const auto &sz : sizes) {
+          bool cut = false;
+          lines = wrap(m.text, W - 4, (bottom - top) / sz.pitch, width_in(sz.f), &cut);
+          bf = sz.f;
+          pitch = sz.pitch;
+          if (!cut) break;
+        }
+        int y = top + ((bottom - top) - (int) lines.size() * pitch) / 2;
+        for (const auto &l : lines) {
+          it.print(W / 2, y, bf, TextAlign::TOP_CENTER, l.c_str());
+          y += pitch;
+        }
+        const int bar = (int) (W * nq.remaining(now) + 0.5f);
+        if (bar > 0) it.filled_rectangle(0, H - 2, bar, 2);
         return;
       }
 
