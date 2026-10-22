@@ -94,9 +94,10 @@ Use `--topic-down/--topic-up` if your topics differ from `qingping/{mac}/down` a
 Within a few seconds the screen shows "ESPHome / Qingping CGDN1 / starting...", then the
 readings. Add the device in Home Assistant (ESPHome integration, `api_key` as encryption key).
 
-Check the log first (`esphome logs cgdn1.yaml`): `dump_config` of `cgdn1_boot` must say
-`Trial mark result: OK`. If it says FAILED, the next reboot comes back to ESPHome, not stock:
-keep the unit powered and don't push anything until you know why.
+Check the log first (`esphome -s trial_mode true logs cgdn1.yaml`; pass the same `-s` options
+you built with): `dump_config` of `cgdn1_boot` must say `Trial mark result: OK`. If it says
+FAILED, the next reboot comes back to ESPHome, not stock: keep the unit powered and don't push
+anything until you know why.
 
 While trial mode is on, **don't use ESPHome's own OTA** (dashboard Install, `esphome run`/
 `upload`, the HA update entity, the captive portal's upload form): it writes the other slot and

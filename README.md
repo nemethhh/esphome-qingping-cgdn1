@@ -1,5 +1,12 @@
 # ESPHome for the Qingping Air Monitor Lite (CGDN1)
 
+> [!WARNING]
+> **Installing this can brick your monitor, and there are no guarantees.** The install replaces
+> the firmware over the air with no rollback. If an image fails to boot, the only way back is a
+> USB-TTL (3.3 V UART) adapter wired to the ESP32 inside the case. Getting to the board means
+> taking out the glued-in screen, which can break it. Use at your own risk: no warranty, no
+> support, and no liability for a dead or damaged device.
+
 ESPHome firmware for the Qingping Air Monitor Lite (CGDN1, ESP32 "Dany-ESP" hardware), with
 the stock screen, touch slider, status LED and battery handling re-created. It runs fully
 local, with no cloud connection.
