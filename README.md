@@ -206,6 +206,14 @@ stock image.
 Qingping is a trademark of its owner. This project is not affiliated with or endorsed by
 Qingping.
 
+## Physical report freshness in Home Assistant
+
+CO2 and compensated temperature/humidity opt into `force_update`. Home
+Assistant otherwise deduplicates identical native-API values before updating
+`last_reported`, so a valid constant reading can appear stale to a room helper.
+Use these physical exports as aggregate inputs; the optional display feed and
+display diagnostics are screen-only and must not feed the same aggregates.
+
 ## License
 
 MIT, see [LICENSE](LICENSE), except as noted above.

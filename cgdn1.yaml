@@ -221,6 +221,10 @@ sensor:
     co2:
       id: co2
       name: "CO2"
+      # HA otherwise deduplicates identical native-API values before writing
+      # last_reported. A real sample must refresh physical-source freshness,
+      # even when its number is unchanged; screen telemetry must not do that.
+      force_update: true
       on_value:
         - lambda: id(display_sources).local_co2_seen(millis());
     # The SCD40's own T/RH (self-heated, offset-compensated): diagnostic cross-check only.
@@ -279,6 +283,7 @@ sensor:
   - platform: template
     id: temp_comp
     name: "Temperature"
+    force_update: true
     unit_of_measurement: "°C"
     device_class: temperature
     state_class: measurement
@@ -287,6 +292,7 @@ sensor:
   - platform: template
     id: rh_comp
     name: "Humidity"
+    force_update: true
     unit_of_measurement: "%"
     device_class: humidity
     state_class: measurement
