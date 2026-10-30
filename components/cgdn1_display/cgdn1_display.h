@@ -45,6 +45,8 @@
 
 #include "display_math.h"
 #include "stock_page.h"
+#include "summary_page.h"
+#include "display_sources.h"
 
 #include "esphome/components/display/display_buffer.h"
 #include "esphome/components/spi/spi.h"
