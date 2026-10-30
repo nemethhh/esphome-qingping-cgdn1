@@ -14,6 +14,57 @@ local, with no cloud connection.
 Installed over the air from the stock firmware, without opening the case. See
 **[docs/install.md](docs/install.md)** before trying.
 
+## Optional fixed idle screen and PM power control
+
+The **Idle screen** setting keeps the existing moving sensor page by default.
+Select **CO2 + temperature** for a stationary two-reading layout: large CO2 at
+fixed coordinates above temperature. **Idle screen delay** (1–300 seconds)
+controls when it returns after a touch; touching still lets you browse normal
+pages. The existing **Display**, **Display brightness** (1–6) and night-mode
+settings still apply. Stationary OLED pixels can burn in: dimming and night mode
+reduce exposure but do not eliminate that risk.
+
+The **PM sensor** switch controls the physical PM module supply on GPIO13. OFF
+stops its polling and marks PM1.0/PM2.5/PM10 unavailable; it does not report zero
+or leave old numbers visible. ON waits 30 seconds for airflow before reading.
+The switch is restored across reboots and defaults to ON for a new install.
+The boot probe runs while the rail is still held on, then the saved OFF state
+is applied, so a restored OFF does not permanently fail the sensor's setup.
+GPIO18 and the GPIO23 power latch are not changed by this feature. The GPIO13
+mapping is also used by [noxend's CGDN1 PM driver](https://github.com/noxend/qingping-cgdn1/blob/main/firmware/components/sensors/pm_sensor.c).
+Verify rail isolation and fan behaviour on your board revision. Powering the PM
+module off can change internal airflow/self-heating; do not assume the previous
+temperature compensation is calibrated for that mode.
+
+To optionally use HA aggregates **only on the idle screen**, enable the package:
+
+```yaml
+substitutions:
+  ha_display: "true"
+  ha_display_entity: sensor.cgdn1_display_feed
+```
+
+Create a Home Assistant Template sensor whose state is:
+
+```jinja
+{{ as_timestamp(now()) | int }}|{{ states('sensor.room_co2') }}|{{ states('sensor.room_temperature') }}
+```
+
+Use room helpers that already validate their physical sources. `now()` produces
+a minute heartbeat even if both numbers are unchanged. The device accepts a feed
+only after HA time synchronisation and rejects stale/future/malformed snapshots.
+Each reading falls back independently to its own fresh local measurement; when
+both sources fail it shows dashes. The feed expires after 180 seconds, and any
+API client disconnect conservatively clears it until the next heartbeat.
+The physical sensors exported to HA stay unchanged: do not use the screen feed
+or the four **Display ...** diagnostic entities as room-aggregate inputs.
+
+Host tests cover timeout/wraparound, invalid/partial data, recovery, fixed pixel
+bounds and power/warmup cancellation. On one stock-4.3.4 CGDN1 the app was also
+installed through stock OTA and tested with real partial/unavailable HA feeds
+and PM OFF → ON → OFF while CO2/SHT4x continued measuring. This does not establish
+support for every board revision; audible fan behaviour requires physical checking.
+
 ## Features
 
 | Area        | What you get                                                                 |
@@ -154,6 +205,14 @@ stock image.
 
 Qingping is a trademark of its owner. This project is not affiliated with or endorsed by
 Qingping.
+
+## Physical report freshness in Home Assistant
+
+CO2 and compensated temperature/humidity opt into `force_update`. Home
+Assistant otherwise deduplicates identical native-API values before updating
+`last_reported`, so a valid constant reading can appear stale to a room helper.
+Use these physical exports as aggregate inputs; the optional display feed and
+display diagnostics are screen-only and must not feed the same aggregates.
 
 ## License
 

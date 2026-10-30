@@ -8,9 +8,12 @@ substitutions:
   # secrets, packages/mqtt_true.yaml):
   #   esphome -s mqtt_messages true compile cgdn1.yaml
   mqtt_messages: "false"
+  ha_display: "false"
+  ha_display_entity: sensor.cgdn1_display_feed
 
 packages:
   mqtt_messages: !include packages/mqtt_${mqtt_messages}.yaml
+  ha_display: !include packages/ha_display_${ha_display}.yaml
 
 esphome:
   name: ${name}
@@ -57,7 +60,7 @@ external_components:
   - source:
       type: local
       path: components
-    components: [cgdn1_boot, cgdn1_tcomp, cgdn1_display, cgdn1_touch, cgdn1_led, cgdn1_night, cgdn1_notify]
+    components: [cgdn1_boot, cgdn1_tcomp, cgdn1_display, cgdn1_touch, cgdn1_led, cgdn1_night, cgdn1_notify, cgdn1_pm]
 
 # Power latch (GPIO23/13/18 HIGH from a global constructor, before anything else runs) and the
 # back-button long-press power-off. Must always be present: without it the unit switches itself off.
@@ -154,6 +157,20 @@ button:
     on_press:
       - lambda: id(boot).boot_other_slot();
 
+# Physical PM module supply. GPIO13 is also used by noxend/qingping-cgdn1's
+# pm_sensor.c; GPIO18 is not changed here. Verify the rail on other board revisions.
+# The power controller runs after PMSA003I's boot probe, applies the restored
+# switch, suspends reads while off and invalidates all three PM values. Every
+# power-on waits 30 s for airflow before the first measurement.
+cgdn1_pm:
+  id: pm_power
+  reader_id: pm_reader
+  enable_pin: GPIO13
+  pm_1_0: pm1
+  pm_2_5: pm25
+  pm_10_0: pm10
+  warmup_time: 30s
+
 # --- Air sensors (I2C bus 0) -------------------------------------------------
 # Pins/addresses from the stock 4.8.5 firmware (docs/hardware.md): bus 0 is
 # SDA=26/SCL=27 at 20 kHz in stock. The sensor rails (GPIO13/18) are already HIGH from
@@ -204,6 +221,12 @@ sensor:
     co2:
       id: co2
       name: "CO2"
+      # HA otherwise deduplicates identical native-API values before writing
+      # last_reported. A real sample must refresh physical-source freshness,
+      # even when its number is unchanged; screen telemetry must not do that.
+      force_update: true
+      on_value:
+        - lambda: id(display_sources).local_co2_seen(millis());
     # The SCD40's own T/RH (self-heated, offset-compensated): diagnostic cross-check only.
     temperature:
       name: "CO2 sensor temperature"
@@ -215,6 +238,7 @@ sensor:
   # Plantower PMSA003I @0x12, I2C variant (stock reads the 32-byte "BM" 0x001C frame).
   # standard_units (default) = atmospheric values, which is what stock consumes.
   - platform: pmsa003i
+    id: pm_reader
     i2c_id: bus_a
     address: 0x12
     update_interval: 60s
@@ -241,6 +265,8 @@ sensor:
     update_interval: 10s  # heater stays off (default)
     temperature:
       id: t_raw
+      on_value:
+        - lambda: id(display_sources).local_temperature_seen(millis());
       name: "Temperature (raw)"
       entity_category: diagnostic
       filters:
@@ -257,6 +283,7 @@ sensor:
   - platform: template
     id: temp_comp
     name: "Temperature"
+    force_update: true
     unit_of_measurement: "°C"
     device_class: temperature
     state_class: measurement
@@ -265,6 +292,7 @@ sensor:
   - platform: template
     id: rh_comp
     name: "Humidity"
+    force_update: true
     unit_of_measurement: "%"
     device_class: humidity
     state_class: measurement
@@ -567,6 +595,8 @@ cgdn1_touch:
 # x0.9 above 55 %RH raw. Steady state on USB, battery full, no display: T_raw - 5.98 C,
 # reached over ~2 h of uptime (-3.7 C at 20 min, -5.6 C at 1 h).
 globals:
+  - id: display_sources
+    type: cgdn1_display::DisplaySources
   - id: tc_engine
     type: tcomp::Engine
   # Restore record (stock config_store 0x16/0x17/0x18/0x1a equivalents). Stock keeps it in
@@ -622,6 +652,21 @@ globals:
     initial_value: "0"
 
 number:
+  # Idle page delay. Touch/back-button activity returns to the normal sensor
+  # pages; after this delay the selected idle layout returns, without movement.
+  - platform: template
+    id: idle_screen_delay
+    name: "Idle screen delay"
+    icon: mdi:timer-outline
+    entity_category: config
+    unit_of_measurement: "s"
+    min_value: 1
+    max_value: 300
+    step: 1
+    initial_value: 30
+    optimistic: true
+    restore_value: true
+    mode: box
   # Stock user calibration (cloud "temperature_offset"/"humidity_offset", config_store
   # 0x43/0x45; the *_zoom variants are not exposed). Applied after the model, before the
   # final clamps (T >= 0, RH 0..99.9).
@@ -1063,8 +1108,20 @@ display:
           id(pages).set_dwell(INFO, INFO_DWELL_MS);
         }
         id(pages).update(now);
+        if (id(idle_screen).active_index().value_or(0) == 1 &&
+            summary_due(now, id(night_activity_ms), uint32_t(id(idle_screen_delay).state * 1000.0f))) {
+          // Notifications and the boot screen have already taken priority above.
+          // The layout never moves, and the LED follows CO2 rather than a hidden page.
+          id(led_shown) = cgdn1_led::SENSOR_CO2;
+          const auto clock = id(ha_time).now();
+          const auto values = id(display_sources).choose(now, clock.is_valid() ? clock.timestamp : 0,
+                                                         id(co2).state, id(temp_comp).state);
+          draw_summary(values.co2, values.temperature,
+                       [&it](int x, int y) { it.draw_pixel_at(x, y, display::COLOR_ON); });
+          return;
+        }
         const int shown = id(pages).page();  // flips halfway through a slide: LED and indicator
-        id(led_shown) = shown == INFO ? cgdn1_led::SENSOR_NONE : pg[shown].led;  // LED off on info
+        id(led_shown) = shown == INFO || (shown < 3 && !id(pm_power).ready()) ? cgdn1_led::SENSOR_NONE : pg[shown].led;  // LED off on info
         // Bounce range from the ink of the page the slide is heading to, from its first frame on
         // (page() would swap ranges halfway, mid-screen). A narrower arriving range pulls the
         // offset in <= 3 px per frame while sliding (no sideways jump); settled, it clamps at once.
@@ -1079,6 +1136,11 @@ display:
         for (int k = 0; k < COUNT; k++) {
           const int px = id(pages).page_x(k);
           if (px <= -W || px >= W) continue;  // only the shown page and the one sliding in/out
+          if (k < 3 && !id(pm_power).ready()) {
+            it.print(px + W / 2, 60, id(f_small), TextAlign::CENTER,
+                     id(pm_power).enabled() ? "PM warming up" : "PM off");
+            continue;
+          }
           if (k != INFO) {
             draw_page(make_page(pg[k].kind, pg[k].value, now), pos.x + px, pos.y, plot);
             continue;
@@ -1166,6 +1228,19 @@ output:
     frequency: 5000Hz
 
 select:
+  # Keep existing moving pages as the default for upstream users. The optional
+  # fixed layout has no pixel drift: lower brightness limits wear but cannot
+  # eliminate OLED burn-in. Night mode and the Display switch remain in charge.
+  - platform: template
+    id: idle_screen
+    name: "Idle screen"
+    icon: mdi:monitor-dashboard
+    entity_category: config
+    options: ["Selected sensor", "CO2 + temperature"]
+    initial_option: "Selected sensor"
+    optimistic: true
+    restore_value: true
+
   # Temperature model (ours, not stock): "Stock" = the original 4.8.5 brightness/charge terms
   # only, "Measured" = adds the display (brightness-dependent) and Bluetooth heat measured on
   # the device ("Display heat" / "Bluetooth heat" numbers) and moves RH to the compensated T at
@@ -1246,6 +1321,20 @@ text_sensor:
     lambda: return id(oled).variant_summary();
 
 switch:
+  # One module supplies PM1.0, PM2.5 and PM10. Restored across reboots; ON on a
+  # fresh install. Restoration only queues a request until the reader has probed.
+  - platform: template
+    id: pm_enabled
+    name: "PM sensor"
+    icon: mdi:air-filter
+    entity_category: config
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    turn_on_action:
+      - lambda: id(pm_power).set_enabled(true);
+    turn_off_action:
+      - lambda: id(pm_power).set_enabled(false);
+
   # Status LED on/off (not in stock, where only the display switch darkens it). Restored, on by
   # default; the 100 ms refresh applies it.
   - platform: template

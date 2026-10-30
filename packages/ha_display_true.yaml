@@ -1,0 +1,54 @@
+# Optional HA feed. Configure ha_display_entity to a template sensor whose state
+# is {{ as_timestamp(now()) | int }}|{{ states('sensor.room_co2') }}|{{ states('sensor.room_temperature') }}
+# now() refreshes once a minute; numeric source validity/freshness belongs to the
+# selected HA helpers. No imported measurement is re-exported as a physical one.
+api:
+  on_client_disconnected:
+    - lambda: id(display_sources).clear();
+
+text_sensor:
+  - platform: homeassistant
+    id: ha_display_feed
+    entity_id: ${ha_display_entity}
+    internal: true
+    on_value:
+      - lambda: |-
+          const auto now = id(ha_time).now();
+          if (now.is_valid()) id(display_sources).ingest(x.c_str(), millis(), now.timestamp);
+          else id(display_sources).clear();
+  - platform: template
+    id: display_co2_source
+    name: "Display CO2 source"
+    entity_category: diagnostic
+  - platform: template
+    id: display_temperature_source
+    name: "Display temperature source"
+    entity_category: diagnostic
+
+sensor:
+  - platform: template
+    id: display_co2
+    name: "Display CO2"
+    unit_of_measurement: "ppm"
+    accuracy_decimals: 0
+    entity_category: diagnostic
+    update_interval: never
+  - platform: template
+    id: display_temperature
+    name: "Display temperature"
+    unit_of_measurement: "°C"
+    accuracy_decimals: 1
+    entity_category: diagnostic
+    update_interval: never
+
+interval:
+  - interval: 5s
+    then:
+      - lambda: |-
+          const auto now = id(ha_time).now();
+          const auto values = id(display_sources).choose(millis(), now.is_valid() ? now.timestamp : 0,
+                                                        id(co2).state, id(temp_comp).state);
+          id(display_co2).publish_state(values.co2);
+          id(display_temperature).publish_state(values.temperature);
+          id(display_co2_source).publish_state(cgdn1_display::source_name(values.co2_source));
+          id(display_temperature_source).publish_state(cgdn1_display::source_name(values.temperature_source));
