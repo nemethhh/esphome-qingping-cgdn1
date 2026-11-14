@@ -8,9 +8,14 @@ substitutions:
   # secrets, packages/mqtt_true.yaml):
   #   esphome -s mqtt_messages true compile cgdn1.yaml
   mqtt_messages: "false"
+  # "true" for passive BTHome v2 BLE broadcasts of the readings (unencrypted; see
+  # packages/bthome_true.yaml), e.g. for a portable unit read by a phone:
+  #   esphome -s bthome true compile cgdn1.yaml
+  bthome: "false"
 
 packages:
   mqtt_messages: !include packages/mqtt_${mqtt_messages}.yaml
+  bthome: !include packages/bthome_${bthome}.yaml
 
 esphome:
   name: ${name}
@@ -125,10 +130,11 @@ time:
   - platform: homeassistant
     id: ha_time
 
-# Bluetooth proxy for Home Assistant (not in stock; stock's BLE is HomeKit/MiIO pairing only).
-# BLE shares the radio with WiFi (software coexistence) and keeps the CPU busier, so it adds
-# self-heat: the "Bluetooth" switch below stops/starts the BLE stack at runtime (also used by the
-# self-heating tests). Always on after a boot. Costs ~440 KB of the app slot.
+# Bluetooth proxy for Home Assistant (not in stock; stock's BLE is HomeKit/MiIO pairing only)
+# plus, optionally, passive BTHome v2 broadcasts (substitution bthome). BLE shares the radio
+# with WiFi (software coexistence) and keeps the CPU busier, so it adds self-heat: the
+# "Bluetooth" switch below stops/starts the BLE stack at runtime (also used by the self-heating
+# tests). Always on after a boot. Costs ~440 KB of the app slot.
 esp32_ble:
   id: ble
   enable_on_boot: true
@@ -1285,6 +1291,8 @@ switch:
     turn_on_action:
       - ble.enable:
     turn_off_action:
+      # Stops the BTHome broadcast (bthome "true"); harmless when nothing is advertising.
+      - lambda: 'if (id(ble).is_active()) esp_ble_gap_stop_advertising();'
       - ble.disable:
 
   # Panel on/off (HA + the back-button click). DISABLED restore: no action at boot, the

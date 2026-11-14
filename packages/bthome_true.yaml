@@ -1,0 +1,81 @@
+# bthome "true": passive BTHome v2 environmental broadcasts (see the comment below), for local
+# BLE companions such as AndroidAQL or Home Assistant's BTHome integration. Included by
+# cgdn1.yaml when the `bthome` substitution is "true":
+#   esphome -s bthome true compile cgdn1.yaml
+# Unencrypted, from the unit's fixed public MAC: anyone nearby can read the values, and a unit
+# carried around can be followed by it. A unit also set up in HA over the ESPHome API shows its
+# readings twice (BTHome device + ESPHome device). Sent while the "Bluetooth" switch is on.
+interval:
+  # Passive BTHome v2 (UUID 0xFCD2, unencrypted device_info 0x40) BLE advertisement for local
+  # companions (e.g. AndroidAQL, Home Assistant BTHome). Object IDs in ascending order:
+  # 0x01 battery (uint8 %), 0x02 temperature (sint16 0.01 C), 0x03 humidity (uint16 0.01 %),
+  # 0x0D pm2.5 (uint16 ug/m3), 0x0E pm10 (uint16 ug/m3), 0x12 co2 (uint16 ppm).
+  - interval: 5s
+    then:
+      - lambda: |-
+          if (!id(ble).is_active()) return;
+          uint8_t adv[31];
+          uint8_t n = 0;
+          adv[n++] = 0x02;
+          adv[n++] = 0x01;
+          adv[n++] = 0x06;
+          const uint8_t svc_len_idx = n++;
+          adv[n++] = 0x16;
+          adv[n++] = 0xD2;
+          adv[n++] = 0xFC;
+          adv[n++] = 0x40;
+          if (!std::isnan(id(battery_level).state)) {
+            int bat = (int) lroundf(id(battery_level).state);
+            if (bat < 0) bat = 0;
+            if (bat > 100) bat = 100;
+            adv[n++] = 0x01;
+            adv[n++] = (uint8_t) bat;
+          }
+          if (!std::isnan(id(temp_comp).state)) {
+            int16_t t_c100 = (int16_t) lroundf(id(temp_comp).state * 100.0f);
+            adv[n++] = 0x02;
+            adv[n++] = (uint8_t) (t_c100 & 0xFF);
+            adv[n++] = (uint8_t) ((t_c100 >> 8) & 0xFF);
+          }
+          if (!std::isnan(id(rh_comp).state)) {
+            int rh_c100 = (int) lroundf(id(rh_comp).state * 100.0f);
+            if (rh_c100 < 0) rh_c100 = 0;
+            if (rh_c100 > 10000) rh_c100 = 10000;
+            adv[n++] = 0x03;
+            adv[n++] = (uint8_t) (rh_c100 & 0xFF);
+            adv[n++] = (uint8_t) ((rh_c100 >> 8) & 0xFF);
+          }
+          if (!std::isnan(id(pm25).state)) {
+            int pm25_u16 = (int) lroundf(id(pm25).state);
+            if (pm25_u16 < 0) pm25_u16 = 0;
+            if (pm25_u16 > 65535) pm25_u16 = 65535;
+            adv[n++] = 0x0D;
+            adv[n++] = (uint8_t) (pm25_u16 & 0xFF);
+            adv[n++] = (uint8_t) ((pm25_u16 >> 8) & 0xFF);
+          }
+          if (!std::isnan(id(pm10).state)) {
+            int pm10_u16 = (int) lroundf(id(pm10).state);
+            if (pm10_u16 < 0) pm10_u16 = 0;
+            if (pm10_u16 > 65535) pm10_u16 = 65535;
+            adv[n++] = 0x0E;
+            adv[n++] = (uint8_t) (pm10_u16 & 0xFF);
+            adv[n++] = (uint8_t) ((pm10_u16 >> 8) & 0xFF);
+          }
+          if (!std::isnan(id(co2).state) && id(co2).state > 0.0f) {
+            int co2_u16 = (int) lroundf(id(co2).state);
+            if (co2_u16 > 65535) co2_u16 = 65535;
+            adv[n++] = 0x12;
+            adv[n++] = (uint8_t) (co2_u16 & 0xFF);
+            adv[n++] = (uint8_t) ((co2_u16 >> 8) & 0xFF);
+          }
+          if (n <= 8) return;
+          adv[svc_len_idx] = n - svc_len_idx - 1;
+          esp_ble_adv_params_t adv_params = {};
+          adv_params.adv_int_min = 0x0200;  // 320 ms (512 * 0.625 ms)
+          adv_params.adv_int_max = 0x0280;  // 400 ms (640 * 0.625 ms)
+          adv_params.adv_type = ADV_TYPE_NONCONN_IND;
+          adv_params.own_addr_type = BLE_ADDR_TYPE_PUBLIC;
+          adv_params.channel_map = ADV_CHNL_ALL;
+          adv_params.adv_filter_policy = ADV_FILTER_ALLOW_SCAN_ANY_CON_ANY;
+          esp_ble_gap_config_adv_data_raw(adv, n);
+          esp_ble_gap_start_advertising(&adv_params);
