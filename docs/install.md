@@ -104,7 +104,8 @@ While trial mode is on, **don't use ESPHome's own OTA** (dashboard Install, `esp
 overwrites stock.
 
 To go back to stock, press **Restart** in HA, or leave it without an API client for 15 minutes
-(ESPHome's `reboot_timeout`).
+(ESPHome's `reboot_timeout`). This holds for a `-s portable true` build too: trial mode keeps
+the timeouts that the portable build otherwise turns off (README "Portable use").
 
 ## 5. Install for good
 

@@ -28,6 +28,7 @@ Installed over the air from the stock firmware, without opening the case. See
 | LED         | Stock level colours for the reading on screen (PM standard selectable)       |
 | Power       | Back button: click toggles the display, long press powers off (on battery)   |
 | Safety      | Trial-mode install, "Boot other firmware slot" button                        |
+| Portable    | Optional: for a unit carried around and read over BLE, without WiFi or HA (see below) |
 
 ## Layout
 
@@ -42,6 +43,7 @@ components/              external components
   cgdn1_night            stock night mode window
   cgdn1_notify           MQTT screen messages: queue, answers, word wrap
 packages/mqtt_*.yaml     optional MQTT screen messages (substitution mqtt_messages)
+packages/portable_*.yaml optional portable build (substitutions portable, timezone)
 tools/cgdn1_ota_push.py  push an image to the stock firmware over local MQTT
 tools/gen_stock_icons.py regenerate stock_icons.h from a stock firmware image
 tests/                   host tests (g++ for the C++ logic, image/partition checks)
@@ -132,6 +134,29 @@ actions:
 makes the wait react to this question's id only.
 
 </details>
+
+## Portable use
+
+Optional, off by default. By default the unit expects to sit on one WiFi network next to Home
+Assistant: after 15 min without WiFi, or without an API client, ESPHome reboots it; out of range
+it opens a fallback AP with a captive portal; its clock and time zone come from HA. For a unit
+carried around and read mostly over BLE, build with
+`esphome -s portable true compile cgdn1.yaml`:
+
+- **No WiFi/API reboot timeouts.** Out of range or without HA is normal. ESPHome keeps retrying
+  WiFi, and OTA and the API come back with it. To manage the unit at more than one site, list
+  them under `wifi: networks:`.
+- **No fallback AP or captive portal.** Out of range it would take radio time from BLE, cost
+  battery and offer a firmware upload form wherever the unit goes. In exchange, wrong WiFi
+  credentials can't be fixed over the air.
+- **Clock from SNTP** (any network with internet access), in UTC unless built with
+  `-s timezone <zone>` (e.g. `America/Chicago`). Night mode's hours are in that zone. Until the
+  first sync after a boot, night mode does nothing.
+- **A restart once a day** (after 24 h of uptime), in place of the reboot timeouts as a
+  backstop for a stuck WiFi stack. The self-heating state is saved across it.
+
+In trial mode (`-s trial_mode true`) the 15 min timeouts stay, so a trial build that never gets
+on WiFi, or never sees an API client, goes back to stock by itself.
 
 ## Development
 

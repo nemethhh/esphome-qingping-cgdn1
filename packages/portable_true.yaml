@@ -1,0 +1,34 @@
+# portable "true": carried around, read mostly over BLE, often out of WiFi
+# range and with no Home Assistant at all. Included by cgdn1.yaml when the `portable`
+# substitution is "true":
+#   esphome -s portable true compile cgdn1.yaml
+#
+# - No WiFi/API reboot timeouts: being out of range or without an API client is normal, not a
+#   fault. ESPHome keeps retrying the WiFi network(s) and OTA/API come back with it. Except in
+#   trial mode, where the 15 min defaults stay: a trial build that never gets on WiFi goes back
+#   to stock by itself (packages/portable_trial_*.yaml).
+# - No fallback AP / captive portal: it would come up whenever out of range, taking radio time
+#   from BLE, battery, and exposing a firmware upload form wherever the unit goes. Cost: wrong
+#   WiFi credentials can't be fixed over the air.
+# - Clock from SNTP (any network with internet) instead of Home Assistant. Time zone from the
+#   `timezone` substitution (default UTC, which also sets night mode's hours), e.g.
+#   `-s timezone America/Chicago`. Until the first sync night mode does nothing.
+# - No Bluetooth proxy: with no HA to forward to, its scanning only costs radio time, battery
+#   and heat. The BLE stack stays (and the "Bluetooth" switch) for BTHome (`-s bthome true`).
+# - A restart once a day, as a backstop for a wedged WiFi stack now that nothing else reboots.
+packages:
+  reboot_timeouts: !include portable_trial_${trial_mode}.yaml
+
+time:
+  - platform: sntp
+    id: wall_clock
+    timezone: ${timezone}
+
+interval:
+  - interval: 1h
+    then:
+      - lambda: |-
+          if (millis_64() >= 24ULL * 60 * 60 * 1000) {
+            ESP_LOGI("portable", "daily restart");
+            App.safe_reboot();
+          }
