@@ -1,0 +1,3 @@
+# portable "true", trial_mode "true": keep ESPHome's 15 min API reboot timeout, so a trial build
+# that never sees an API client (no WiFi included) returns to stock on its own.
+{}

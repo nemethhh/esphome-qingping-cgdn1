@@ -1,0 +1,29 @@
+# portable "false" (the default): a fixed install next to Home Assistant. Clock and time zone
+# from HA over the API; fallback AP + captive portal; ESPHome's 15 min API reboot timeout (the
+# WiFi one is inactive while an AP is configured; in trial mode the reboot returns to stock);
+# Bluetooth proxy for HA. See portable_true.yaml.
+wifi:
+  ap:
+    ssid: "${name} Fallback"
+    password: !secret ap_password
+
+captive_portal:
+
+time:
+  - platform: homeassistant
+    id: wall_clock
+
+script:
+  # Long touch: nothing here beyond the HA event (portable_true.yaml: WiFi now + fallback AP).
+  - id: net_now
+    then:
+      - lambda: ""
+
+esp32_ble_tracker:
+
+# Passive: advertisements only, no GATT connections through this device. With active
+# connections the ESP32 BT controller blob asserted (r_assert in r_lld_con_start <-
+# hci_le_create_con_cmd_handler) after ~2 h of Home Assistant retrying a device that kept
+# failing to connect (every ~20 s). Connection-based devices need another HA Bluetooth adapter.
+bluetooth_proxy:
+  active: false

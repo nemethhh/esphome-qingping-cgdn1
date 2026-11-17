@@ -1,0 +1,6 @@
+# portable "true", trial_mode "false": no WiFi/API reboot timeouts (see portable_true.yaml).
+wifi:
+  reboot_timeout: 0s
+
+api:
+  reboot_timeout: 0s

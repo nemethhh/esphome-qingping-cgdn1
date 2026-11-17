@@ -1,0 +1,101 @@
+# portable "true": carried around, read mostly over BLE, often out of WiFi
+# range and with no Home Assistant at all. Included by cgdn1.yaml when the `portable`
+# substitution is "true":
+#   esphome -s portable true -s bthome true compile cgdn1.yaml
+#
+# - No WiFi/API reboot timeouts: being out of range or without an API client is normal, not a
+#   fault. Except in trial mode, where the 15 min API timeout stays: a trial build that never
+#   gets an API client goes back to stock by itself (packages/portable_trial_*.yaml).
+# - WiFi off between searches: out of range ESPHome rescans every ~0.5 s, which costs battery
+#   and radio time taken from BLE. After 5 min without a connection WiFi goes off, and every
+#   30 min it looks again for 5 min.
+# - Fallback AP + captive portal only on a long touch (7 s): never on their own, so nothing
+#   offers a login page wherever the unit goes, but wrong WiFi credentials can still be fixed
+#   without opening the case. Up for 10 min; without a WiFi connection by then the unit
+#   restarts (which in trial mode means stock).
+# - Clock from SNTP (any network with internet) instead of Home Assistant. Time zone from the
+#   `timezone` substitution (default UTC, which also sets night mode's hours), e.g.
+#   `-s timezone America/Chicago`. Until the first sync night mode does nothing.
+# - No Bluetooth proxy: with no HA to forward to, its scanning only costs radio time, battery
+#   and heat. The BLE stack stays (and the "Bluetooth" switch) for BTHome (`-s bthome true`).
+packages:
+  reboot_timeouts: !include portable_trial_${trial_mode}.yaml
+
+wifi:
+  ap:
+    ssid: "${name} Fallback"
+    password: !secret ap_password
+    ap_timeout: 0s  # never by itself; net_now sets it when asked
+
+captive_portal:
+
+time:
+  - platform: sntp
+    id: wall_clock
+    timezone: ${timezone}
+
+globals:
+  # millis() when a long touch opened the fallback AP (0 = not open).
+  - id: net_recovery_ms
+    type: uint32_t
+    initial_value: "0"
+
+script:
+  # Long touch (cgdn1.yaml on_gesture): WiFi on now, plus the fallback AP for 10 min if WiFi
+  # is not connected.
+  - id: net_now
+    then:
+      - lambda: |-
+          auto *wf = wifi::global_wifi_component;
+          cgdn1_notify::Message m;
+          m.title = "WiFi";
+          if (wf->is_connected()) {
+            char ssid[wifi::SSID_BUFFER_SIZE];
+            m.text = std::string("Connected: ") + wf->wifi_ssid_to(ssid);
+          } else if (id(net_recovery_ms) != 0) {
+            m.text = "Fallback AP is on: ${name} Fallback";
+          } else {
+            ESP_LOGI("portable", "long touch: WiFi on, fallback AP for 10 min");
+            id(net_recovery_ms) = millis() | 1;
+            wf->set_ap_timeout(1);
+            wf->enable();
+            m.text = "Fallback AP on for 10 min: ${name} Fallback";
+          }
+          id(notify_q).push(std::move(m));
+      - script.execute: notify_sync
+
+interval:
+  - interval: 10s
+    then:
+      - lambda: |-
+          static constexpr uint32_t SEARCH_MS = 5 * 60 * 1000, RETRY_MS = 30 * 60 * 1000,
+                                    RECOVERY_MS = 10 * 60 * 1000;
+          static uint32_t mark = 0;  // last connected, or WiFi last switched on/off
+          auto *wf = wifi::global_wifi_component;
+          const uint32_t now = millis();
+          if (id(net_recovery_ms) != 0) {
+            if (wf->is_connected()) {  // ESPHome drops the AP on connecting
+              id(net_recovery_ms) = 0;
+              wf->set_ap_timeout(0);
+            } else if (now - id(net_recovery_ms) >= RECOVERY_MS) {
+              // A restart is the only way to take the AP down and offer it again later.
+              ESP_LOGI("portable", "fallback AP: 10 min without WiFi, restarting");
+              App.safe_reboot();
+            }
+            mark = now;
+            return;
+          }
+          if (wf->is_connected()) {
+            mark = now;
+          } else if (wf->is_disabled()) {
+            if (now - mark >= RETRY_MS) {
+              ESP_LOGI("portable", "WiFi on: looking for a network for %u min", (unsigned) (SEARCH_MS / 60000));
+              wf->enable();
+              mark = now;
+            }
+          } else if (now - mark >= SEARCH_MS) {
+            ESP_LOGI("portable", "no WiFi for %u min: WiFi off for %u min", (unsigned) (SEARCH_MS / 60000),
+                     (unsigned) (RETRY_MS / 60000));
+            wf->disable();
+            mark = now;
+          }

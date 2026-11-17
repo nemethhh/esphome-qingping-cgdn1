@@ -12,10 +12,20 @@ substitutions:
   # packages/bthome_true.yaml), e.g. for a portable unit read by a phone:
   #   esphome -s bthome true compile cgdn1.yaml
   bthome: "false"
+  # "true" for a unit carried around and read over BLE, often without WiFi or Home Assistant:
+  # no WiFi/API reboot timeouts (kept in trial mode), WiFi off between searches, fallback AP on
+  # a long touch only, no Bluetooth proxy, SNTP clock (packages/portable_true.yaml); pair it
+  # with bthome:
+  #   esphome -s portable true -s bthome true compile cgdn1.yaml
+  portable: "false"
+  # Time zone of the SNTP clock when portable (night mode hours are in it), e.g.
+  #   esphome -s portable true -s timezone America/Chicago compile cgdn1.yaml
+  timezone: "UTC"
 
 packages:
   mqtt_messages: !include packages/mqtt_${mqtt_messages}.yaml
   bthome: !include packages/bthome_${bthome}.yaml
+  portable: !include packages/portable_${portable}.yaml
 
 esphome:
   name: ${name}
@@ -54,6 +64,12 @@ esp32:
       # other OTA slot): keep IDF's WiFi/PHY components from writing their own namespaces into it.
       CONFIG_ESP_WIFI_NVS_ENABLED: "n"
       CONFIG_ESP_PHY_CALIBRATION_AND_DATA_STORAGE: "n"
+      # Bluedroid traces the tracker/proxy would keep on (esp32_ble disable_bt_logs runs too
+      # early to drop them when those come from a package): off, as before.
+      CONFIG_BT_LOG_BLE_SCAN_TRACE_LEVEL_NONE: "y"
+      CONFIG_BT_LOG_GATT_TRACE_LEVEL_NONE: "y"
+      CONFIG_BT_LOG_L2CAP_TRACE_LEVEL_NONE: "y"
+      CONFIG_BT_LOG_SMP_TRACE_LEVEL_NONE: "y"
 
 logger:
   level: DEBUG
@@ -94,11 +110,7 @@ cgdn1_notify:
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
-  ap:
-    ssid: "${name} Fallback"
-    password: !secret ap_password
-
-captive_portal:
+  # Fallback AP + captive portal: packages/portable_false.yaml (none when portable).
 
 mdns:
 
@@ -120,33 +132,24 @@ ota:
 
 api:
   # Default reboot_timeout (15 min): with no API client ESPHome reboots (in trial mode -> stock).
+  # Off when portable, except in trial mode (packages/portable_*.yaml).
   encryption:
     key: !secret api_key
 
-# Local wall clock for night mode, from Home Assistant over the API (its time zone too; stock
-# uses SNTP + its own time zone setting). Until the first sync the clock is invalid and night
-# mode does nothing, like stock before its clock is set.
-time:
-  - platform: homeassistant
-    id: ha_time
+# Local wall clock for night mode (id `wall_clock`): from Home Assistant over the API (its time zone
+# too), or SNTP when portable (packages/portable_*.yaml; stock uses SNTP + its own time zone
+# setting). Until the first sync the clock is invalid and night mode does nothing, like stock
+# before its clock is set.
 
-# Bluetooth proxy for Home Assistant (not in stock; stock's BLE is HomeKit/MiIO pairing only)
-# plus, optionally, passive BTHome v2 broadcasts (substitution bthome). BLE shares the radio
-# with WiFi (software coexistence) and keeps the CPU busier, so it adds self-heat: the
-# "Bluetooth" switch below stops/starts the BLE stack at runtime (also used by the self-heating
-# tests). Always on after a boot. Costs ~440 KB of the app slot.
+# BLE stack (not in stock; stock's BLE is HomeKit/MiIO pairing only) for the Bluetooth proxy
+# (packages/portable_false.yaml; none when portable) and, optionally, passive BTHome v2
+# broadcasts (substitution bthome). BLE shares the radio with WiFi (software coexistence) and
+# keeps the CPU busier, so it adds self-heat: the "Bluetooth" switch below stops/starts the BLE
+# stack at runtime (also used by the self-heating tests). Always on after a boot. Costs ~440 KB
+# of the app slot.
 esp32_ble:
   id: ble
   enable_on_boot: true
-
-esp32_ble_tracker:
-
-# Passive: advertisements only, no GATT connections through this device. With active
-# connections the ESP32 BT controller blob asserted (r_assert in r_lld_con_start <-
-# hci_le_create_con_cmd_handler) after ~2 h of Home Assistant retrying a device that kept
-# failing to connect (every ~20 s). Connection-based devices need another HA Bluetooth adapter.
-bluetooth_proxy:
-  active: false
 
 button:
   - platform: restart
@@ -533,7 +536,8 @@ event:
 #    with the back button; a touch-driven toggle was too easy to trigger by accident.
 #  - display off: any touch turns it on and does nothing else (stock: a touch on the dark panel
 #    sets the display status back to on, FUN_400e36a0 bits 0x9c -> FUN_400e98e8(0))
-#  - long_touch (7.2 s still): HA event only (stock: network reset, not reproduced).
+#  - long_touch (7.2 s still): HA event; portable builds also switch WiFi on and open the
+#    fallback AP (script net_now, packages/portable_*.yaml). Stock: network reset.
 #  - an MQTT message on screen (packages/mqtt_true.yaml): the gesture goes to it (answer / dismiss) and does
 #    not change the page.
 # Every gesture is also an HA event ("Touch"), the wake-up one included.
@@ -556,6 +560,10 @@ cgdn1_touch:
         id: touch_event
         event_type: !lambda return gesture;
     - lambda: |-
+        if (gesture == "long_touch") {  // also on a dark panel; never dismisses a message
+          id(net_now).execute();
+          return;
+        }
         if (id(touch_wake)) return;  // this touch woke the panel: consumed
         if (id(notify_q).active()) {  // a message is up: the gesture is for it, not the pages
           id(notify_q).gesture(gesture);
@@ -783,7 +791,7 @@ interval:
           cgdn1_night::Inputs in;
           in.enabled = id(night_switch).state;
           in.pages_shown = id(pages).begun();  // past the boot screen
-          const ESPTime t = id(ha_time).now();
+          const ESPTime t = id(wall_clock).now();
           in.clock_valid = t.is_valid();
           in.hour = t.hour;
           in.minute = t.minute;
@@ -1126,13 +1134,16 @@ display:
             snprintf(l, sizeof(l), "IP %s", ip4());
             line(l);
           } else {
-            line("WiFi not connected");
+            line(wf->is_disabled() ? "WiFi off" : "WiFi not connected");
           }
+          #ifdef USE_WIFI_AP
           if (wf->has_ap()) {
             static const std::string ap_ssid = wf->get_ap().get_ssid().str();
             snprintf(l, sizeof(l), "AP %s", ap_ssid.c_str());
             line(l, wf->is_ap_active() ? "active" : "standby");
-          } else {
+          } else
+          #endif
+          {
             line("AP fallback: off");
           }
           const uint32_t up = (uint32_t) (millis_64() / 60000);  // minutes
@@ -1142,7 +1153,11 @@ display:
             snprintf(r, sizeof(r), "up %uh %02um", (unsigned) (up / 60), (unsigned) (up % 60));
           else
             snprintf(r, sizeof(r), "up %um", (unsigned) up);
+          #ifdef USE_BLUETOOTH_PROXY
           line(id(ble).is_active() ? "BT proxy on" : "BT proxy off", r);
+          #else
+          line(id(ble).is_active() ? "Bluetooth on" : "Bluetooth off", r);
+          #endif
         }
         if (id(pages).indicator_visible(now)) draw_page_dots(shown, COUNT, plot);
         return;
@@ -1280,7 +1295,7 @@ switch:
     optimistic: true
     restore_mode: RESTORE_DEFAULT_ON
 
-  # BLE stack (Bluetooth proxy) on/off at runtime. DISABLED restore: on after every boot.
+  # BLE stack (Bluetooth proxy, BTHome) on/off at runtime. DISABLED restore: on after every boot.
   - platform: template
     id: ble_switch
     name: "Bluetooth"

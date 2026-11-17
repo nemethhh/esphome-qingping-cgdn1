@@ -28,6 +28,7 @@ Installed over the air from the stock firmware, without opening the case. See
 | LED         | Stock level colours for the reading on screen (PM standard selectable)       |
 | Power       | Back button: click toggles the display, long press powers off (on battery)   |
 | Safety      | Trial-mode install, "Boot other firmware slot" button                        |
+| Portable    | Optional: for a unit carried around and read over BLE, without WiFi or HA (see below) |
 
 ## Layout
 
@@ -43,6 +44,7 @@ components/              external components
   cgdn1_notify           MQTT screen messages: queue, answers, word wrap
 packages/mqtt_*.yaml     optional MQTT screen messages (substitution mqtt_messages)
 packages/bthome_*.yaml   optional BTHome v2 BLE broadcasts (substitution bthome)
+packages/portable_*.yaml optional portable build (substitutions portable, timezone)
 tools/cgdn1_ota_push.py  push an image to the stock firmware over local MQTT
 tools/gen_stock_icons.py regenerate stock_icons.h from a stock firmware image
 tests/                   host tests (g++ for the C++ logic, image/partition checks)
@@ -147,6 +149,37 @@ Assistant's BTHome integration through any Bluetooth adapter or proxy. They stop
   carried around can be recognised wherever it goes.
 - **Shown twice in Home Assistant** for a unit also added through the ESPHome integration: HA
   discovers the BTHome device too (ignore that discovery to avoid it).
+
+## Portable use
+
+Optional, off by default. By default the unit expects to sit on one WiFi network next to Home
+Assistant: out of range it opens a fallback AP with a captive portal; after 15 min without an
+API client (no WiFi included) ESPHome reboots it; its clock and time zone come from HA. For a
+unit carried around and read mostly over BLE, build with
+`esphome -s portable true -s bthome true compile cgdn1.yaml` (without `bthome` nothing uses
+Bluetooth):
+
+- **No WiFi/API reboot timeouts.** Out of range or without HA is normal. To manage the unit at
+  more than one site, edit `wifi:` in `cgdn1.yaml` to list them under `networks:`.
+- **WiFi off between searches.** Out of range ESPHome would rescan nonstop. After 5 min without
+  a connection WiFi goes off ("WiFi off" on the info page), and every 30 min it looks again for
+  5 min; OTA and the API come back with it.
+- **Fallback AP only on a long touch.** Hold the slider still for 7 s: WiFi comes on now, and
+  if it does not connect, the "cgdn1 Fallback" AP (password `ap_password`) with its captive
+  portal is up for 10 min to fix the WiFi credentials. Without a WiFi connection by then the
+  unit restarts. The AP never comes up on its own, so it isn't offered wherever the unit goes.
+- **Clock from SNTP** (any network with internet access), in UTC unless built with
+  `-s timezone <zone>` (e.g. `America/Chicago`). Night mode's hours are in that zone. Until the
+  first sync after a boot, night mode does nothing.
+- **No Bluetooth proxy.** With no HA to forward to, its scanning only costs radio time,
+  battery and heat. The BLE stack and the "Bluetooth" switch stay for BTHome (`-s bthome true`).
+  The "Bluetooth heat" term (1.6 C) was measured with the proxy scanning; the heat of BTHome
+  broadcasts alone is not measured and is likely lower, so compensated temperature may read up
+  to that much low. Tune "Bluetooth heat", or turn off "Bluetooth heat compensation", from HA.
+
+In trial mode (`-s trial_mode true`) the 15 min API timeout stays, so a trial build that never
+gets on WiFi, or never sees an API client, goes back to stock by itself. The restart at the end
+of a long-touch AP also goes back to stock.
 
 ## Development
 

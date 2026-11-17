@@ -50,6 +50,9 @@ def lambdas(cfg, key):
 DEFAULT = ()
 TRIAL = ("trial_mode", "true")
 ALL_ON = ("trial_mode", "true", "bthome", "true", "mqtt_messages", "true")
+PORTABLE = ("portable", "true")
+PORTABLE_TRIAL = ("portable", "true", "trial_mode", "true")
+EVERYTHING = ALL_ON + PORTABLE
 
 
 def test_default_build():
@@ -58,6 +61,7 @@ def test_default_build():
     assert "ap" in cfg["wifi"] and "captive_portal" in cfg
     assert cfg["api"]["reboot_timeout"] == "15min"
     assert [t["platform"] for t in cfg["time"]] == ["homeassistant"]
+    assert cfg["wifi"]["ap"]["ap_timeout"] != "0s"
     assert "mqtt" not in cfg
     assert "esp_ble_gap_config_adv_data_raw" not in lambdas(cfg, "interval")
 
@@ -70,7 +74,8 @@ def test_bluetooth_proxy_stays_passive():
         assert cfg["bluetooth_proxy"]["active"] in (False, "false")
 
 
-@pytest.mark.parametrize("subs", [TRIAL, ALL_ON], ids=["trial", "all_on"])
+@pytest.mark.parametrize("subs", [TRIAL, ALL_ON, PORTABLE_TRIAL, EVERYTHING],
+                         ids=["trial", "all_on", "portable_trial", "everything"])
 def test_trial_build_can_return_to_stock(subs):
     cfg = merged(*subs)
     assert cfg["cgdn1_boot"]["trial_mode"] in (True, "true")
@@ -78,13 +83,32 @@ def test_trial_build_can_return_to_stock(subs):
     assert cfg["api"]["reboot_timeout"] == "15min"
 
 
-def test_bthome_broadcasts():
-    cfg = merged(*ALL_ON)
-    assert "esp_ble_gap_config_adv_data_raw" in lambdas(cfg, "interval")
+@pytest.mark.parametrize("subs", [ALL_ON, EVERYTHING], ids=["all_on", "everything"])
+def test_bthome_broadcasts(subs):
+    assert "esp_ble_gap_config_adv_data_raw" in lambdas(merged(*subs), "interval")
 
 
-def test_mqtt_messages_never_reboot_or_discover():
-    mqtt = merged(*ALL_ON)["mqtt"]
+@pytest.mark.parametrize("subs", [PORTABLE, EVERYTHING], ids=["portable", "everything"])
+def test_portable_build(subs):
+    cfg = merged(*subs)
+    # No HA to forward to: no proxy scanning.
+    assert "bluetooth_proxy" not in cfg and "esp32_ble_tracker" not in cfg
+    # The fallback AP only on a long touch (script net_now), never by itself.
+    assert cfg["wifi"]["ap"]["ap_timeout"] == "0s" and "captive_portal" in cfg
+    assert "net_now" in [s["id"] for s in cfg["script"]]
+    assert "wf->disable()" in lambdas(cfg, "interval")  # WiFi off between searches
+    assert [t["platform"] for t in cfg["time"]] == ["sntp"]
+
+
+def test_portable_without_trial_never_reboots_for_wifi():
+    cfg = merged(*PORTABLE)
+    assert cfg["wifi"]["reboot_timeout"] == "0s"
+    assert cfg["api"]["reboot_timeout"] == "0s"
+
+
+@pytest.mark.parametrize("subs", [ALL_ON, EVERYTHING], ids=["all_on", "everything"])
+def test_mqtt_messages_never_reboot_or_discover(subs):
+    mqtt = merged(*subs)["mqtt"]
     # Screen messages only: a missing broker must not reboot the unit (in trial: back to stock),
     # and HA already has every entity over the API.
     assert mqtt["reboot_timeout"] == "0s"
