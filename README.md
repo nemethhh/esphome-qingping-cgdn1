@@ -20,7 +20,7 @@ Installed over the air from the stock firmware, without opening the case. See
 |-------------|------------------------------------------------------------------------------|
 | Sensors     | CO2 (SCD40), PM1.0/2.5/10 (PMSA003I), temperature/humidity (SHT4x)           |
 | T/RH        | Stock self-heating compensation (`cgdn1_tcomp`) with a measured display + Bluetooth heat model, tunable from HA ("Heat model" Stock/Measured), plus offsets |
-| Bluetooth   | Passive Bluetooth proxy for Home Assistant (advertisements only), switchable |
+| Bluetooth   | Passive Bluetooth proxy for Home Assistant (advertisements only), switchable; optional BTHome broadcasts (see below) |
 | Battery     | Voltage, stock percent table, charge current, charging state                 |
 | Display     | Stock pages and digits plus a PM1.0 page, push slide on touch, burn-in drift, brightness, night mode; an info page (version, MAC, WiFi/IP, fallback AP, Bluetooth, uptime) that moves on after 10 s |
 | Touch       | Taps/swipes/long touch from the ATtiny814 slider, as HA events               |
@@ -43,6 +43,7 @@ components/              external components
   cgdn1_night            stock night mode window
   cgdn1_notify           MQTT screen messages: queue, answers, word wrap
 packages/mqtt_*.yaml     optional MQTT screen messages (substitution mqtt_messages)
+packages/bthome_*.yaml   optional BTHome v2 BLE broadcasts (substitution bthome)
 packages/portable_*.yaml optional portable build (substitutions portable, timezone)
 tools/cgdn1_ota_push.py  push an image to the stock firmware over local MQTT
 tools/gen_stock_icons.py regenerate stock_icons.h from a stock firmware image
@@ -134,6 +135,20 @@ actions:
 makes the wait react to this question's id only.
 
 </details>
+
+## BTHome broadcasts
+
+Optional, off by default. Build with `esphome -s bthome true compile cgdn1.yaml` and the unit
+sends its readings every 5 s as passive [BTHome v2](https://bthome.io/) BLE advertisements:
+battery, temperature and humidity (compensated), PM2.5, PM10 and CO2. Any BTHome receiver
+nearby can read them, with no pairing or connection: a phone app such as AndroidAQL, or Home
+Assistant's BTHome integration through any Bluetooth adapter or proxy. They stop while the
+"Bluetooth" switch is off.
+
+- **Unencrypted, from the unit's fixed MAC.** Anyone in range can read the values, and a unit
+  carried around can be recognised wherever it goes.
+- **Shown twice in Home Assistant** for a unit also added through the ESPHome integration: HA
+  discovers the BTHome device too (ignore that discovery to avoid it).
 
 ## Portable use
 
