@@ -829,7 +829,7 @@ interval:
                      st.on, st.chg, st.cst, st.bacc, tc.heat_restored() ? "restored" : "seeded", in.t_raw);
           if (!tc.ready() && tc.ticks() == 60)
             ESP_LOGW("tcomp", "no SHT4x reading after 60 s: compensated T/RH unavailable");
-          if (tc.ticks() % 10 == 0) {
+          if (tc.ticks() % 10 == 0 || (ok && !was_ready)) {
             if (ok) {
               id(temp_comp).publish_state(tc.out().t);
               id(rh_comp).publish_state(tc.out().rh);
