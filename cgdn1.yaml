@@ -815,11 +815,7 @@ interval:
           in.batt_pct = id(battery_level).state;
           id(tc_display_on) = id(oled).is_on();
           in.level = id(display_level).state;
-          #ifdef USE_ESP32_BLE_TRACKER
           in.ble = id(ble).is_active();
-          #else
-          in.ble = false;  // the Bluetooth heat was measured with the proxy scanning; no scan here
-          #endif
           auto idx = id(hc_model).active_index();
           in.measured = !idx.has_value() || *idx == 1;  // no value yet -> Measured
           in.heat.a6 = id(hc_a6).state;

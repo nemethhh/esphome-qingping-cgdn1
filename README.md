@@ -170,9 +170,9 @@ Bluetooth):
   first sync after a boot, night mode does nothing.
 - **No Bluetooth proxy.** With no HA to forward to, its scanning only costs radio time,
   battery and heat. The BLE stack and the "Bluetooth" switch stay for BTHome (`-s bthome true`).
-  The Bluetooth heat term is not applied (it was measured with the proxy scanning); the heat of
-  the idle BLE stack and the BTHome broadcasts is not measured, so compensated temperature may
-  be off by a little.
+  The "Bluetooth heat" term (1.6 C) was measured with the proxy scanning; the heat of BTHome
+  broadcasts alone is not measured and is likely lower, so compensated temperature may read up
+  to that much low. Tune "Bluetooth heat", or turn off "Bluetooth heat compensation", from HA.
 
 In trial mode (`-s trial_mode true`) the 15 min timeouts stay, so a trial build that never gets
 on WiFi, or never sees an API client, goes back to stock by itself.
