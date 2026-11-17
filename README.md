@@ -153,14 +153,15 @@ Assistant's BTHome integration through any Bluetooth adapter or proxy. They stop
 ## Portable use
 
 Optional, off by default. By default the unit expects to sit on one WiFi network next to Home
-Assistant: after 15 min without WiFi, or without an API client, ESPHome reboots it; out of range
-it opens a fallback AP with a captive portal; its clock and time zone come from HA. For a unit
-carried around and read mostly over BLE, build with
-`esphome -s portable true compile cgdn1.yaml`:
+Assistant: out of range it opens a fallback AP with a captive portal; after 15 min without an
+API client (no WiFi included) ESPHome reboots it; its clock and time zone come from HA. For a
+unit carried around and read mostly over BLE, build with
+`esphome -s portable true -s bthome true compile cgdn1.yaml` (without `bthome` nothing uses
+Bluetooth):
 
 - **No WiFi/API reboot timeouts.** Out of range or without HA is normal. ESPHome keeps retrying
-  WiFi, and OTA and the API come back with it. To manage the unit at more than one site, list
-  them under `wifi: networks:`.
+  WiFi, and OTA and the API come back with it. To manage the unit at more than one site, edit
+  `wifi:` in `cgdn1.yaml` to list them under `networks:`.
 - **No fallback AP or captive portal.** Out of range it would take radio time from BLE, cost
   battery and offer a firmware upload form wherever the unit goes. In exchange, wrong WiFi
   credentials can't be fixed over the air.
@@ -169,13 +170,12 @@ carried around and read mostly over BLE, build with
   first sync after a boot, night mode does nothing.
 - **No Bluetooth proxy.** With no HA to forward to, its scanning only costs radio time,
   battery and heat. The BLE stack and the "Bluetooth" switch stay for BTHome (`-s bthome true`).
-  The Bluetooth heat term is not applied (it was measured with the proxy scanning).
-- **A restart once a day** (after 24 h of uptime), in place of the reboot timeouts as a
-  backstop for a stuck WiFi stack. The self-heating state is saved across it.
+  The Bluetooth heat term is not applied (it was measured with the proxy scanning); the heat of
+  the idle BLE stack and the BTHome broadcasts is not measured, so compensated temperature may
+  be off by a little.
 
 In trial mode (`-s trial_mode true`) the 15 min timeouts stay, so a trial build that never gets
-on WiFi, or never sees an API client, goes back to stock by itself. Like any reboot in trial
-mode, the daily restart also goes back to stock.
+on WiFi, or never sees an API client, goes back to stock by itself.
 
 ## Development
 

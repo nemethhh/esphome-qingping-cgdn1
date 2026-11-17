@@ -1,7 +1,7 @@
 # portable "false" (the default): a fixed install next to Home Assistant. Clock and time zone
-# from HA over the API; fallback AP + captive portal; ESPHome's default 15 min WiFi/API reboot
-# timeouts (in trial mode, 15 min without an API client returns to stock); Bluetooth proxy for
-# HA. See portable_true.yaml.
+# from HA over the API; fallback AP + captive portal; ESPHome's 15 min API reboot timeout (the
+# WiFi one is inactive while an AP is configured; in trial mode the reboot returns to stock);
+# Bluetooth proxy for HA. See portable_true.yaml.
 wifi:
   ap:
     ssid: "${name} Fallback"

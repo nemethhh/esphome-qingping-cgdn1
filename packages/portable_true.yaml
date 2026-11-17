@@ -15,7 +15,6 @@
 #   `-s timezone America/Chicago`. Until the first sync night mode does nothing.
 # - No Bluetooth proxy: with no HA to forward to, its scanning only costs radio time, battery
 #   and heat. The BLE stack stays (and the "Bluetooth" switch) for BTHome (`-s bthome true`).
-# - A restart once a day, as a backstop for a wedged WiFi stack now that nothing else reboots.
 packages:
   reboot_timeouts: !include portable_trial_${trial_mode}.yaml
 
@@ -23,12 +22,3 @@ time:
   - platform: sntp
     id: wall_clock
     timezone: ${timezone}
-
-interval:
-  - interval: 1h
-    then:
-      - lambda: |-
-          if (millis_64() >= 24ULL * 60 * 60 * 1000) {
-            ESP_LOGI("portable", "daily restart");
-            App.safe_reboot();
-          }

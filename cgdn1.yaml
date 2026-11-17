@@ -14,8 +14,8 @@ substitutions:
   bthome: "false"
   # "true" for a unit carried around and read over BLE, often without WiFi or Home Assistant:
   # no WiFi/API reboot timeouts (kept in trial mode), no fallback AP, no Bluetooth proxy, SNTP
-  # clock, daily restart (packages/portable_true.yaml):
-  #   esphome -s portable true compile cgdn1.yaml
+  # clock (packages/portable_true.yaml); pair it with bthome:
+  #   esphome -s portable true -s bthome true compile cgdn1.yaml
   portable: "false"
   # Time zone of the SNTP clock when portable (night mode hours are in it), e.g.
   #   esphome -s portable true -s timezone America/Chicago compile cgdn1.yaml
@@ -63,6 +63,12 @@ esp32:
       # other OTA slot): keep IDF's WiFi/PHY components from writing their own namespaces into it.
       CONFIG_ESP_WIFI_NVS_ENABLED: "n"
       CONFIG_ESP_PHY_CALIBRATION_AND_DATA_STORAGE: "n"
+      # Bluedroid traces the tracker/proxy would keep on (esp32_ble disable_bt_logs runs too
+      # early to drop them when those come from a package): off, as before.
+      CONFIG_BT_LOG_BLE_SCAN_TRACE_LEVEL_NONE: "y"
+      CONFIG_BT_LOG_GATT_TRACE_LEVEL_NONE: "y"
+      CONFIG_BT_LOG_L2CAP_TRACE_LEVEL_NONE: "y"
+      CONFIG_BT_LOG_SMP_TRACE_LEVEL_NONE: "y"
 
 logger:
   level: DEBUG
