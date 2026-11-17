@@ -134,23 +134,15 @@ api:
 # setting). Until the first sync the clock is invalid and night mode does nothing, like stock
 # before its clock is set.
 
-# Bluetooth proxy for Home Assistant (not in stock; stock's BLE is HomeKit/MiIO pairing only)
-# plus, optionally, passive BTHome v2 broadcasts (substitution bthome). BLE shares the radio
-# with WiFi (software coexistence) and keeps the CPU busier, so it adds self-heat: the
-# "Bluetooth" switch below stops/starts the BLE stack at runtime (also used by the self-heating
-# tests). Always on after a boot. Costs ~440 KB of the app slot.
+# BLE stack (not in stock; stock's BLE is HomeKit/MiIO pairing only) for the Bluetooth proxy
+# (packages/portable_false.yaml; none when portable) and, optionally, passive BTHome v2
+# broadcasts (substitution bthome). BLE shares the radio with WiFi (software coexistence) and
+# keeps the CPU busier, so it adds self-heat: the "Bluetooth" switch below stops/starts the BLE
+# stack at runtime (also used by the self-heating tests). Always on after a boot. Costs ~440 KB
+# of the app slot.
 esp32_ble:
   id: ble
   enable_on_boot: true
-
-esp32_ble_tracker:
-
-# Passive: advertisements only, no GATT connections through this device. With active
-# connections the ESP32 BT controller blob asserted (r_assert in r_lld_con_start <-
-# hci_le_create_con_cmd_handler) after ~2 h of Home Assistant retrying a device that kept
-# failing to connect (every ~20 s). Connection-based devices need another HA Bluetooth adapter.
-bluetooth_proxy:
-  active: false
 
 button:
   - platform: restart
@@ -817,7 +809,11 @@ interval:
           in.batt_pct = id(battery_level).state;
           id(tc_display_on) = id(oled).is_on();
           in.level = id(display_level).state;
+          #ifdef USE_ESP32_BLE_TRACKER
           in.ble = id(ble).is_active();
+          #else
+          in.ble = false;  // the Bluetooth heat was measured with the proxy scanning; no scan here
+          #endif
           auto idx = id(hc_model).active_index();
           in.measured = !idx.has_value() || *idx == 1;  // no value yet -> Measured
           in.heat.a6 = id(hc_a6).state;
@@ -1149,7 +1145,11 @@ display:
             snprintf(r, sizeof(r), "up %uh %02um", (unsigned) (up / 60), (unsigned) (up % 60));
           else
             snprintf(r, sizeof(r), "up %um", (unsigned) up);
+          #ifdef USE_BLUETOOTH_PROXY
           line(id(ble).is_active() ? "BT proxy on" : "BT proxy off", r);
+          #else
+          line(id(ble).is_active() ? "Bluetooth on" : "Bluetooth off", r);
+          #endif
         }
         if (id(pages).indicator_visible(now)) draw_page_dots(shown, COUNT, plot);
         return;
@@ -1287,7 +1287,7 @@ switch:
     optimistic: true
     restore_mode: RESTORE_DEFAULT_ON
 
-  # BLE stack (Bluetooth proxy) on/off at runtime. DISABLED restore: on after every boot.
+  # BLE stack (Bluetooth proxy, BTHome) on/off at runtime. DISABLED restore: on after every boot.
   - platform: template
     id: ble_switch
     name: "Bluetooth"

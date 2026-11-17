@@ -167,11 +167,15 @@ carried around and read mostly over BLE, build with
 - **Clock from SNTP** (any network with internet access), in UTC unless built with
   `-s timezone <zone>` (e.g. `America/Chicago`). Night mode's hours are in that zone. Until the
   first sync after a boot, night mode does nothing.
+- **No Bluetooth proxy.** With no HA to forward to, its scanning only costs radio time,
+  battery and heat. The BLE stack and the "Bluetooth" switch stay for BTHome (`-s bthome true`).
+  The Bluetooth heat term is not applied (it was measured with the proxy scanning).
 - **A restart once a day** (after 24 h of uptime), in place of the reboot timeouts as a
   backstop for a stuck WiFi stack. The self-heating state is saved across it.
 
 In trial mode (`-s trial_mode true`) the 15 min timeouts stay, so a trial build that never gets
-on WiFi, or never sees an API client, goes back to stock by itself.
+on WiFi, or never sees an API client, goes back to stock by itself. Like any reboot in trial
+mode, the daily restart also goes back to stock.
 
 ## Development
 
