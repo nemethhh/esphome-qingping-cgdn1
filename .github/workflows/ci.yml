@@ -17,8 +17,11 @@ jobs:
           # The image that is flashed over stock first: the image checks matter most here.
           - variant: trial
             subs: "-s trial_mode true"
-          # Largest image: every option on.
+          # Every option on.
           - variant: all-options
+            subs: "-s trial_mode true -s portable true -s bthome true -s mqtt_messages true"
+          # Largest image (portable leaves the Bluetooth proxy out): the slot-size check.
+          - variant: largest
             subs: "-s trial_mode true -s bthome true -s mqtt_messages true"
     steps:
       - uses: actions/checkout@v4
