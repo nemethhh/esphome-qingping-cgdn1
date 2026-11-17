@@ -6,7 +6,20 @@ on:
 
 jobs:
   test:
+    name: test (${{ matrix.variant }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: default
+            subs: ""
+          # The image that is flashed over stock first: the image checks matter most here.
+          - variant: trial
+            subs: "-s trial_mode true"
+          # Largest image: every option on.
+          - variant: all-options
+            subs: "-s trial_mode true -s bthome true -s mqtt_messages true"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -22,16 +35,15 @@ jobs:
           api_key: "$(openssl rand -base64 32)"
           ota_password: "ci-ota-password"
           ap_password: "ci-ap-password"
+          mqtt_broker: "192.0.2.1"
+          mqtt_username: "ci-mqtt-user"
+          mqtt_password: "ci-mqtt-password"
           YAML
-      - name: Validate config
-        run: |
-          esphome config cgdn1.yaml > /dev/null
-          esphome -s trial_mode true config cgdn1.yaml > /dev/null
       - uses: actions/cache@v4
         with:
           path: ~/.esphome
           key: esphome-${{ hashFiles('requirements.txt') }}
       - name: Compile
-        run: esphome compile cgdn1.yaml
-      - name: Host tests (component logic, partition table, image format)
+        run: esphome ${{ matrix.subs }} compile cgdn1.yaml
+      - name: Host tests (component logic, merged config per option, image + sdkconfig of this build)
         run: pytest -rs
