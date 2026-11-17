@@ -159,12 +159,15 @@ unit carried around and read mostly over BLE, build with
 `esphome -s portable true -s bthome true compile cgdn1.yaml` (without `bthome` nothing uses
 Bluetooth):
 
-- **No WiFi/API reboot timeouts.** Out of range or without HA is normal. ESPHome keeps retrying
-  WiFi, and OTA and the API come back with it. To manage the unit at more than one site, edit
-  `wifi:` in `cgdn1.yaml` to list them under `networks:`.
-- **No fallback AP or captive portal.** Out of range it would take radio time from BLE, cost
-  battery and offer a firmware upload form wherever the unit goes. In exchange, wrong WiFi
-  credentials can't be fixed over the air.
+- **No WiFi/API reboot timeouts.** Out of range or without HA is normal. To manage the unit at
+  more than one site, edit `wifi:` in `cgdn1.yaml` to list them under `networks:`.
+- **WiFi off between searches.** Out of range ESPHome would rescan nonstop. After 5 min without
+  a connection WiFi goes off ("WiFi off" on the info page), and every 30 min it looks again for
+  5 min; OTA and the API come back with it.
+- **Fallback AP only on a long touch.** Hold the slider still for 7 s: WiFi comes on now, and
+  if it does not connect, the "cgdn1 Fallback" AP (password `ap_password`) with its captive
+  portal is up for 10 min to fix the WiFi credentials. Without a WiFi connection by then the
+  unit restarts. The AP never comes up on its own, so it isn't offered wherever the unit goes.
 - **Clock from SNTP** (any network with internet access), in UTC unless built with
   `-s timezone <zone>` (e.g. `America/Chicago`). Night mode's hours are in that zone. Until the
   first sync after a boot, night mode does nothing.
@@ -174,8 +177,9 @@ Bluetooth):
   broadcasts alone is not measured and is likely lower, so compensated temperature may read up
   to that much low. Tune "Bluetooth heat", or turn off "Bluetooth heat compensation", from HA.
 
-In trial mode (`-s trial_mode true`) the 15 min timeouts stay, so a trial build that never gets
-on WiFi, or never sees an API client, goes back to stock by itself.
+In trial mode (`-s trial_mode true`) the 15 min API timeout stays, so a trial build that never
+gets on WiFi, or never sees an API client, goes back to stock by itself. The restart at the end
+of a long-touch AP also goes back to stock.
 
 ## Development
 

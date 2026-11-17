@@ -13,6 +13,12 @@ time:
   - platform: homeassistant
     id: wall_clock
 
+script:
+  # Long touch: nothing here beyond the HA event (portable_true.yaml: WiFi now + fallback AP).
+  - id: net_now
+    then:
+      - lambda: ""
+
 esp32_ble_tracker:
 
 # Passive: advertisements only, no GATT connections through this device. With active

@@ -13,8 +13,9 @@ substitutions:
   #   esphome -s bthome true compile cgdn1.yaml
   bthome: "false"
   # "true" for a unit carried around and read over BLE, often without WiFi or Home Assistant:
-  # no WiFi/API reboot timeouts (kept in trial mode), no fallback AP, no Bluetooth proxy, SNTP
-  # clock (packages/portable_true.yaml); pair it with bthome:
+  # no WiFi/API reboot timeouts (kept in trial mode), WiFi off between searches, fallback AP on
+  # a long touch only, no Bluetooth proxy, SNTP clock (packages/portable_true.yaml); pair it
+  # with bthome:
   #   esphome -s portable true -s bthome true compile cgdn1.yaml
   portable: "false"
   # Time zone of the SNTP clock when portable (night mode hours are in it), e.g.
@@ -535,7 +536,8 @@ event:
 #    with the back button; a touch-driven toggle was too easy to trigger by accident.
 #  - display off: any touch turns it on and does nothing else (stock: a touch on the dark panel
 #    sets the display status back to on, FUN_400e36a0 bits 0x9c -> FUN_400e98e8(0))
-#  - long_touch (7.2 s still): HA event only (stock: network reset, not reproduced).
+#  - long_touch (7.2 s still): HA event; portable builds also switch WiFi on and open the
+#    fallback AP (script net_now, packages/portable_*.yaml). Stock: network reset.
 #  - an MQTT message on screen (packages/mqtt_true.yaml): the gesture goes to it (answer / dismiss) and does
 #    not change the page.
 # Every gesture is also an HA event ("Touch"), the wake-up one included.
@@ -558,6 +560,10 @@ cgdn1_touch:
         id: touch_event
         event_type: !lambda return gesture;
     - lambda: |-
+        if (gesture == "long_touch") {  // also on a dark panel; never dismisses a message
+          id(net_now).execute();
+          return;
+        }
         if (id(touch_wake)) return;  // this touch woke the panel: consumed
         if (id(notify_q).active()) {  // a message is up: the gesture is for it, not the pages
           id(notify_q).gesture(gesture);
@@ -1128,7 +1134,7 @@ display:
             snprintf(l, sizeof(l), "IP %s", ip4());
             line(l);
           } else {
-            line("WiFi not connected");
+            line(wf->is_disabled() ? "WiFi off" : "WiFi not connected");
           }
           #ifdef USE_WIFI_AP
           if (wf->has_ap()) {
